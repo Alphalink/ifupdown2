@@ -1129,7 +1129,15 @@ class _NetlinkCache:
         """
         try:
             with self._cache_lock:
-                return self._link_cache[ifname].attributes[Link.IFLA_LINKINFO].value[Link.IFLA_INFO_DATA][Link.IFLA_BR_VLAN_FILTERING]
+                # XXX PATCH ALPHALINK: ajout d'un condition pour etre sur que
+                # l'on entre dans ce bout de code que lorsqu'il s'agit d'un
+                # bridge.
+                # Le probleme apparait lorsque l'on cree des vlans sur des
+                # bonds ou il croit que le bond est un bridge
+                if self._link_cache[ifname].attributes[Link.IFLA_LINKINFO].value[Link.IFLA_INFO_KIND] == 'bridge':
+                    return self._link_cache[ifname].attributes[Link.IFLA_LINKINFO].value[Link.IFLA_INFO_DATA][Link.IFLA_BR_VLAN_FILTERING]
+                else:
+                    return 0
         except (KeyError, AttributeError):
             return False
         except TypeError as e:
