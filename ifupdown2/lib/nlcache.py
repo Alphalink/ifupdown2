@@ -3118,6 +3118,13 @@ class NetlinkListenerWithCache(nllistener.NetlinkManagerWithListener, BaseObject
 
         if broadcast:
             log_msg.append("broadcast %s" % broadcast)
+        # XXX PATCH ALPHALINK: pour ajouter tout le temps le broadcast
+        # Utilise pour heartbeat
+        else:
+            if addr.version == 4 and addr.prefixlen < 31:
+                net = ipaddress.ip_network(addr, False)
+                log_msg.append("broadcast %s" % net.broadcast_address)
+
 
         if preferred_lifetime:
             log_msg.append("preferred_lft %s" % preferred_lifetime)
@@ -3162,6 +3169,13 @@ class NetlinkListenerWithCache(nllistener.NetlinkManagerWithListener, BaseObject
             if broadcast:
                 log_msg.append("broadcast %s" % broadcast)
                 packet.add_attribute(Address.IFA_BROADCAST, ipnetwork.IPAddress(broadcast))
+            # XXX PATCH ALPHALINK: pour ajouter tout le temps le broadcast
+            # Utilise pour heartbeat
+            else:
+                if addr.version == 4 and addr.prefixlen < 31:
+                    net = ipaddress.ip_network(addr, False)
+                    log_msg.append("broadcast %s" % net.broadcast_address)
+                    packet.add_attribute(Address.IFA_BROADCAST, net.broadcast_address)
 
             if preferred_lifetime:
                 # struct ifa_cacheinfo {
