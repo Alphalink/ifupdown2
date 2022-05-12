@@ -1,5 +1,6 @@
-ifupdown2 (3.1.0-1) unstable; urgency=medium
+ifupdown2 (3.1.0-alphalink1) unstable; urgency=medium
 
+  [ Julien Fortin ]
    * New: ifquery-check now validates admin state
    * New: bond: bond mac should always be inherited from it's first slave
 
@@ -49,6 +50,13 @@ ifupdown2 (3.1.0-1) unstable; urgency=medium
     * Fix: usercmds: Set environment just like the original ifupdown
     * Fix: update mako template warning (python3-mako)
     * Fix: batman_adv: fix unresolved reference
+
+  [ Adrien Banlin ]
+  * Add: driver policy
+  * Add: dad handling per itf acting upon ipv6_dad_handling_enable policy
+  * Add: ARP IP bond check
+  * Fix: dhcp client killed on no wait policy
+
 
  -- Julien Fortin <jfortin@nvidia.com>  Mon, 05 Jul 2021 23:42:42 +0200
 
