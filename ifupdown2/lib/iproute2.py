@@ -315,6 +315,39 @@ class IPRoute2(Cache, Requirements):
         self.__execute_or_batch(utils.ip_cmd, " ".join(cmd))
         self.__update_cache_after_link_creation(ifname, "vxlan")
 
+    def link_add_l3vxi(self, link_exists, ifname, ip, group, physdev, port, ttl=None):
+        self.logger.info("creating l3vxi device: %s" % ifname)
+
+        if link_exists:
+            # When updating an SVD we need to use `ip link set` and we have to
+            # drop the external keyword:
+            # $ ip link set dev vxlan0 type vxlan external local 27.0.0.242 dev ipmr-lo
+            # Error: vxlan: cannot change COLLECT_METADATA flag.
+            cmd = ["link set dev %s type vxlan" % ifname]
+        else:
+            cmd = ["link add dev %s type vxlan external vnifilter" % ifname]
+            # when changing local ip, if we specify vnifilter we get:
+            # Error: vxlan: cannot change flag.
+            # So we are only setting this attribute on vxlan creation
+
+        if ip:
+            cmd.append("local %s" % ip)
+
+        if physdev:
+            cmd.append("dev %s" % physdev)
+
+        if group:
+            cmd.append("group %s" % group)
+
+        if port:
+            cmd.append("dstport %s" % port)
+
+        if ttl:
+            cmd.append("ttl %s" % ttl)
+
+        self.__execute_or_batch(utils.ip_cmd, " ".join(cmd))
+        self.__update_cache_after_link_creation(ifname, "vxlan")
+
     def link_create_vxlan(self, name, vxlanid, localtunnelip=None, svcnodeip=None,
                           remoteips=None, learning='on', ageing=None, ttl=None, physdev=None, udp_csum='on', tos = None):
         if svcnodeip and remoteips:
@@ -394,22 +427,36 @@ class IPRoute2(Cache, Requirements):
     def link_add_openvswitch(self, ifname, kind):
         self.__update_cache_after_link_creation(ifname, kind)
 
+    def link_set_protodown_reason_clag_on(self, ifname):
+        utils.exec_command("%s link set dev %s protodown_reason clag on" % (utils.ip_cmd, ifname))
+
+    def link_set_protodown_reason_clag_off(self, ifname):
+        utils.exec_command("%s link set dev %s protodown_reason clag off" % (utils.ip_cmd, ifname))
+
+    def link_set_protodown_reason_frr_on(self, ifname):
+        utils.exec_command("%s link set dev %s protodown_reason frr on" % (utils.ip_cmd, ifname))
+
+    def link_set_protodown_reason_frr_off(self, ifname):
+        utils.exec_command("%s link set dev %s protodown_reason frr off" % (utils.ip_cmd, ifname))
+
     ############################################################################
     # TUNNEL
     ############################################################################
 
-    def tunnel_create(self, tunnelname, mode, attrs=None):
-        if self.cache.link_exists(tunnelname):
-            return
+    def tunnel_create(self, tunnelname, mode, attrs=None, link_exists=False):
+        if link_exists:
+            op = "change"
+        else:
+            op = "add"
 
         cmd = []
         if "6" in mode:
             cmd.append("-6")
 
         if mode in ["gretap"]:
-            cmd.append("link add %s type %s" % (tunnelname, mode))
+            cmd.append("link %s %s type %s" % (op, tunnelname, mode))
         else:
-            cmd.append("tunnel add %s mode %s" % (tunnelname, mode))
+            cmd.append("tunnel %s %s mode %s" % (op, tunnelname, mode))
 
         if attrs:
             for k, v in attrs.items():
@@ -920,6 +967,22 @@ class IPRoute2(Cache, Requirements):
             if g:
                 cmd_args += ' group %s' %(g)
             self.__execute_or_batch(utils.bridge_cmd, cmd_args)
+
+    def bridge_vni_add(self, vxlan_device, vni):
+        # bridge vni add understands ranges:
+        # bridge vni add dev vx0 vni 10,11,20-30
+        self.__execute_or_batch(
+            utils.bridge_cmd,
+            "vni add dev %s vni %s" % (vxlan_device, ','.join(vni.split()))
+        )
+
+    def bridge_vni_int_set_del(self, vxlan_device, vni):
+        # bridge vni del understands ranges:
+        # bridge vni del dev vx0 vni 10,11,20-30
+        self.__execute_or_batch(
+            utils.bridge_cmd,
+            "vni del dev %s vni %s" % (vxlan_device, ','.join([str(x) for x in vni]))
+        )
 
     def bridge_vni_del_list(self, vxlandev, vnis):
         cmd_args = "vni del dev %s vni %s" % (vxlandev, ','.join(vnis))

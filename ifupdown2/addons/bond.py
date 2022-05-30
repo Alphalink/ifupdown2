@@ -223,7 +223,7 @@ class bond(Addon, moduleBase):
         Link.IFLA_BOND_MODE: lambda x: Link.ifla_bond_mode_tbl[x],
         Link.IFLA_BOND_MIIMON: int,
         Link.IFLA_BOND_ARP_INTERVAL: int,
-        Link.IFLA_BOND_ARP_IP_TARGET: lambda x: [IPv4Address(x)],
+        Link.IFLA_BOND_ARP_IP_TARGET: lambda x: [IPv4Address(ip) for ip in x],
         Link.IFLA_BOND_USE_CARRIER: utils.get_boolean_from_string,
         Link.IFLA_BOND_AD_LACP_RATE: lambda x: int(utils.get_boolean_from_string(x)),
         Link.IFLA_BOND_XMIT_HASH_POLICY: lambda x: Link.ifla_bond_xmit_hash_policy_tbl[x],
@@ -381,6 +381,10 @@ class bond(Addon, moduleBase):
             if clag_bond or ifaceobj.link_privflags & ifaceLinkPrivFlags.ES_BOND:
                 try:
                     self.netlink.link_set_protodown_on(slave)
+                    if clag_bond:
+                        self.iproute2.link_set_protodown_reason_clag_on(slave)
+                    else:
+                        self.iproute2.link_set_protodown_reason_frr_on(slave)
                 except Exception as e:
                     self.logger.error('%s: %s' % (ifaceobj.name, str(e)))
 
@@ -406,16 +410,19 @@ class bond(Addon, moduleBase):
             for s in runningslaves:
                 # make sure that slaves are not in protodown since we are not in the clag-bond or es-bond case
                 if not clag_bond and not ifaceobj.link_privflags & ifaceLinkPrivFlags.ES_BOND and self.cache.get_link_protodown(s):
+                    self.iproute2.link_set_protodown_reason_clag_off(s)
                     self.netlink.link_set_protodown_off(s)
-
                 if s not in slaves:
                     self.sysfs.bond_remove_slave(ifaceobj.name, s)
                     removed_slave.append(s)
                     if clag_bond:
                         try:
+                            self.iproute2.link_set_protodown_reason_clag_off(s)
                             self.netlink.link_set_protodown_off(s)
                         except Exception as e:
                             self.logger.error('%s: %s' % (ifaceobj.name, str(e)))
+                    elif ifaceobj.link_privflags & ifaceLinkPrivFlags.ES_BOND:
+                        self.netlink.link_set_protodown_off(s)
 
                     # ip link set $slave nomaster will set the slave admin down
                     # if the slave has an auto stanza, we should keep it admin up
@@ -742,11 +749,16 @@ class bond(Addon, moduleBase):
         link_exists, is_link_up = self.cache.link_exists_and_up(ifname)
         ifla_info_data  = self.get_ifla_bond_attr_from_user_config(ifaceobj, link_exists)
         ifla_info_data = self.check_miimon_arp(link_exists, ifaceobj, ifla_info_data)
+        ifla_master = None
 
         remove_delay_from_cache = self.check_updown_delay_nl(link_exists, ifaceobj, ifla_info_data)
 
         # if link exists: down link if specific attributes are specified
         if link_exists:
+            # if bond already exists we need to set IFLA_MASTER to the cached value otherwise
+            # we might loose some information in the cache due to some optimization.
+            ifla_master = self.cache.get_link_attribute(ifname, Link.IFLA_MASTER)
+
             # did bond-mode changed?
             is_link_up, bond_slaves = self.should_update_bond_mode(
                 ifaceobj,
@@ -770,7 +782,7 @@ class bond(Addon, moduleBase):
             self.logger.info('%s: already exists, no change detected' % ifname)
         else:
             try:
-                self.netlink.link_add_bond_with_info_data(ifname, ifla_info_data)
+                self.netlink.link_add_bond_with_info_data(ifname, ifla_master, ifla_info_data)
             except Exception as e:
                 # defensive code
                 # if anything happens, we try to set up the bond with the sysfs api
@@ -915,12 +927,52 @@ class bond(Addon, moduleBase):
             self._query_check_bond_slaves(ifaceobjcurr, 'bond-ports', user_bond_slaves, running_bond_slaves)
         except Exception:
             pass
+        try:
+            attr = 'bond-arp-ip-target'
+            nl_attr         = self._bond_attr_netlink_map[attr]
+            translate_func  = self._bond_attr_ifquery_check_translate_func[nl_attr]
+            current_config  = self.cache.get_link_info_data_attribute(ifaceobj.name, nl_attr)
+            user_config     = ifaceobj.get_attr_value(attr)
+
+            del iface_attrs[iface_attrs.index('bond-arp-ip-target')]
+
+            current_config = [str(c.ip) for c in current_config]
+            user_config = [str(u) for u in user_config]
+
+            difference = list(set(current_config).symmetric_difference(user_config))
+            intersection = list(set(current_config).intersection(user_config))
+
+            for ip in difference:
+                ifaceobjcurr.update_config_with_status(attr, ip, 1)
+
+            for ip in intersection:
+                ifaceobjcurr.update_config_with_status(attr, ip, 0)
+        except Exception:
+            pass
+
+        user_config_translate_func = {
+            "es-sys-mac": lambda x: str(x).lower()
+        }
+
+        if "es-sys-mac" in iface_attrs and os.geteuid() != 0:
+            # for some reason es-sys-mac (IFLA_BOND_AD_ACTOR_SYSTEM) is not part
+            # of the netlink dump if requested by non-root user
+            try:
+                iface_attrs.remove("es-sys-mac")
+                self.logger.info("%s: non-root user can't check attribute \"es-sys-mac\" value" % ifaceobj.name)
+            except:
+                pass
 
         for attr in iface_attrs:
             nl_attr         = self._bond_attr_netlink_map[attr]
             translate_func  = self._bond_attr_ifquery_check_translate_func[nl_attr]
             current_config  = self.cache.get_link_info_data_attribute(ifaceobj.name, nl_attr)
-            user_config     = ifaceobj.get_attr_value_first(attr)
+            user_config_f   = user_config_translate_func.get(attr)
+
+            if user_config_f:
+                user_config = user_config_f(ifaceobj.get_attr_value_first(attr))
+            else:
+                user_config = ifaceobj.get_attr_value_first(attr)
 
             if current_config == translate_func(user_config):
                 ifaceobjcurr.update_config_with_status(attr, user_config, 0)
@@ -972,6 +1024,10 @@ class bond(Addon, moduleBase):
         bond_attrs = self._query_running_attrs(ifaceobjrunning.name)
         if bond_attrs.get('bond-slaves'):
             bond_attrs['bond-slaves'] = ' '.join(bond_attrs.get('bond-slaves'))
+        if bond_attrs.get('bond-arp-ip-target'):
+            for ip in bond_attrs.get('bond-arp-ip-target'):
+                ifaceobjrunning.update_config('bond-arp-ip-target', str(ip.ip))
+            del bond_attrs['bond-arp-ip-target']
 
         [ifaceobjrunning.update_config(k, str(v))
          for k, v in list(bond_attrs.items())

@@ -593,7 +593,7 @@ class _NetlinkCache:
         except (KeyError, TypeError):
             # ifname is not present in the cache
             return False
-        except TypeError as e:
+        except Exception as e:
             return self.__handle_type_error(inspect.currentframe().f_code.co_name, ifname, str(e), return_value=False)
 
     def link_is_loopback(self, ifname):
@@ -3046,7 +3046,7 @@ class NetlinkListenerWithCache(nllistener.NetlinkManagerWithListener, BaseObject
 
     ###
 
-    def link_add_bond_with_info_data(self, ifname, ifla_info_data):
+    def link_add_bond_with_info_data(self, ifname, ifla_master, ifla_info_data):
         self.logger.info(
             "%s: netlink: ip link add dev %s type bond (with attributes)"
             % (ifname, ifname)
@@ -3059,6 +3059,10 @@ class NetlinkListenerWithCache(nllistener.NetlinkManagerWithListener, BaseObject
             link.flags = NLM_F_CREATE | NLM_F_REQUEST | NLM_F_ACK
             link.body = struct.pack('Bxxxiii', socket.AF_UNSPEC, 0, 0, 0)
             link.add_attribute(Link.IFLA_IFNAME, ifname)
+
+            if ifla_master:
+                link.add_attribute(Link.IFLA_MASTER, ifla_master)
+
             link.add_attribute(Link.IFLA_LINKINFO, {
                 Link.IFLA_INFO_KIND: "bond",
                 Link.IFLA_INFO_DATA: ifla_info_data

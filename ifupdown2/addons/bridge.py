@@ -186,7 +186,7 @@ class bridge(Bridge, moduleBase):
             },
             "bridge-hashmax": {
                 "help": "set hash max",
-                "validrange": ["0", "4096"],
+                "validrange": ["0", "65536"],
                 "default": "512",
                 "example": ["bridge-hashmax 4096"]
             },
@@ -235,6 +235,7 @@ class bridge(Bridge, moduleBase):
             "bridge-portmcrouter": {
                 "help": "Set port multicast routers: 0 - disabled, 1 - automatic (queried), 2 - permanently enabled",
                 "validvals": ["<interface-disabled-automatic-enabled>"],
+                "default": "1",
                 "example": [
                     "under the port (for vlan aware bridge): bridge-portmcrouter 0",
                     "under the port (for vlan aware bridge): bridge-portmcrouter 1",
@@ -806,6 +807,17 @@ class bridge(Bridge, moduleBase):
         # To avoid disabling ipv6 on SVD we need to keep track of them
         self.svd_list = set()
 
+        # user defined limit of VNI per vlan on the same bridge
+        # -1 = no limit
+        self.bridge_vni_per_svi = {}
+        try:
+            self.bridge_vni_per_svi_limit = int(policymanager.policymanager_api.get_module_globals(
+                module_name=self.__class__.__name__,
+                attr="bridge_vni_per_svi_limit"
+            ))
+        except:
+            self.bridge_vni_per_svi_limit = -1
+
     @staticmethod
     def _l2protocol_tunnel_set_pvst(ifla_brport_group_mask, ifla_brport_group_maskhi):
         if not ifla_brport_group_maskhi:
@@ -884,7 +896,60 @@ class bridge(Bridge, moduleBase):
         c2 = self.syntax_check_bridge_allow_multiple_vlans(ifaceobj, ifaceobj_getfunc)
         c3 = self.syntax_check_learning_l2_vni_evpn(ifaceobj)
         c4 = self.syntax_check_bridge_arp_vni_vlan(ifaceobj, ifaceobj_getfunc)
-        return retval and c1 and c3 and c4 #and c2
+        c5 = self.syntax_check_bridge_vni_svi_limit(ifaceobj, ifaceobj_getfunc)
+        return retval and c1 and c3 and c4 and c5#and c2
+
+    def syntax_check_bridge_vni_svi_limit(self, ifaceobj, ifaceobj_getfunc):
+        if self.bridge_vni_per_svi_limit > 0 and ifaceobj.link_kind & ifaceLinkKind.VXLAN:
+            vni_name = ifaceobj.name
+            bridge_name = self.__get_vxlan_bridge_name(ifaceobj, ifaceobj_getfunc)
+
+            if not bridge_name:
+                return True
+
+            svi = ifaceobj.get_attr_value_first("bridge-access")
+
+            if not svi:
+                return True
+
+            vni_per_svi = self.bridge_vni_per_svi.get(bridge_name, {}).get(svi)
+
+            def err():
+                self.logger.error(
+                    "%s: misconfiguration detected: maximum vni allowed per bridge (%s) svi (%s) is limited to %s (policy: 'bridge_vni_per_svi_limit')" %
+                    (vni_name,
+                    bridge_name,
+                    svi,
+                    self.bridge_vni_per_svi_limit)
+                )
+
+            if vni_per_svi:
+                err()
+                return False
+            else:
+                if not bridge_name in self.bridge_vni_per_svi:
+                    self.bridge_vni_per_svi[bridge_name] = {
+                        svi: vni_name
+                    }
+
+                elif not svi in self.bridge_vni_per_svi[bridge_name]:
+                    self.bridge_vni_per_svi[bridge_name][svi] = vni_name
+
+                else:
+                    err()
+                    return False
+
+        return True
+
+    def __get_vxlan_bridge_name(self, ifaceobj, ifaceobj_getfunc):
+        try:
+            for intf in ifaceobj.upperifaces:
+                for obj in ifaceobj_getfunc(intf):
+                    if obj.link_kind & ifaceLinkKind.BRIDGE:
+                        return obj.name
+        except:
+            pass
+        return None
 
     def syntax_check_bridge_arp_vni_vlan(self, ifaceobj, ifaceobj_getfunc):
         """
@@ -923,7 +988,8 @@ class bridge(Bridge, moduleBase):
     def syntax_check_learning_l2_vni_evpn(self, ifaceobj):
         result = True
         if ifaceobj.link_privflags & ifaceLinkPrivFlags.BRIDGE_PORT and ifaceobj.link_kind & ifaceLinkKind.VXLAN:
-            if utils.get_boolean_from_string(ifaceobj.get_attr_value_first("bridge-learning")):
+            if utils.get_boolean_from_string(ifaceobj.get_attr_value_first("bridge-learning")) and \
+                (not ifaceobj.get_attr_value_first("vxlan-remoteip") and not ifaceobj.get_attr_value_first("vxlan-remoteip-map")):
                 self.logger.warning(
                     "%s: possible mis-configuration detected: l2-vni configured with bridge-learning ON "
                     "while EVPN is also configured - these two parameters conflict with each other."
@@ -1218,7 +1284,7 @@ class bridge(Bridge, moduleBase):
                 if (not ifupdownflags.flags.DRYRUN and
                     not self.cache.link_exists(bridgeport)):
                     self.log_error('%s: bridge port %s does not exist'
-                                   %(ifaceobj.name, bridgeport), ifaceobj)
+                                   %(ifaceobj.name, bridgeport), ifaceobj, raise_error=False)
                     err += 1
                     continue
                 hwaddress = self.cache.get_link_address(bridgeport)
@@ -1604,7 +1670,43 @@ class bridge(Bridge, moduleBase):
             ret_pvid = None
         return (ret_vids, ret_pvid)
 
-    def _apply_bridge_vids_and_pvid(self, bportifaceobj, vids, pvid,
+    def config_check_bridge_vni_svi_limit(self, vxlan_brport_obj, ifaceobj_getfunc, pvid):
+        """
+        Multiple VXLANs can't be added to the same VLAN
+        """
+        ifname = vxlan_brport_obj.name
+
+        for intf in vxlan_brport_obj.upperifaces:
+            # find the bridge object to access the brport list
+
+            for obj in ifaceobj_getfunc(intf):
+                if obj.link_kind & ifaceLinkKind.BRIDGE:
+
+                    for brport_name in self._get_bridge_port_list(obj):
+                        # loop through the brports
+
+                        if ifname == brport_name:
+                            # ignore current brport
+                            continue
+
+                        for brport_obj in ifaceobj_getfunc(brport_name):
+                            # loop through brport ifaceobjs and check for vxlan bridge-access value
+
+                            if not brport_obj.link_kind & ifaceLinkKind.VXLAN:
+                                continue
+
+                            access = brport_obj.get_attr_value_first("bridge-access")
+                            if access == pvid:
+                                raise Exception(
+                                    "%s: misconfiguration detected: vlan \"%s\" added to two or more VXLANS (%s, %s)" % (
+                                        ifname,
+                                        access,
+                                        ifname,
+                                        brport_obj.name
+                                    )
+                                )
+
+    def _apply_bridge_vids_and_pvid(self, bportifaceobj, ifaceobj_getfunc, vids, pvid,
                                     isbridge):
         """ This method is a combination of methods _apply_bridge_vids and
             _apply_bridge_port_pvids above. A combined function is
@@ -1613,6 +1715,8 @@ class bridge(Bridge, moduleBase):
 
         """
         if not isbridge and (bportifaceobj.link_kind & ifaceLinkKind.VXLAN and not bportifaceobj.link_privflags & ifaceLinkPrivFlags.SINGLE_VXLAN):
+            self.config_check_bridge_vni_svi_limit(bportifaceobj, ifaceobj_getfunc, pvid)
+
             if not vids or not pvid or len(vids) > 1 or vids[0] != pvid:
                 self._error_vxlan_in_vlan_aware_br(bportifaceobj,
                                                    bportifaceobj.upperifaces[0])
@@ -1771,7 +1875,7 @@ class bridge(Bridge, moduleBase):
 
         return vids_list
 
-    def _apply_bridge_vlan_aware_port_settings_all(self, bportifaceobj,
+    def _apply_bridge_vlan_aware_port_settings_all(self, bportifaceobj, ifaceobj_getfunc,
                                                    bridge_vids=None,
                                                    bridge_pvid=None):
         vids = None
@@ -1810,7 +1914,7 @@ class bridge(Bridge, moduleBase):
         else:
             pvid_final = None
 
-        self._apply_bridge_vids_and_pvid(bportifaceobj, vids_final,
+        self._apply_bridge_vids_and_pvid(bportifaceobj, ifaceobj_getfunc, vids_final,
                                          pvid_final, False)
 
     def _apply_bridge_port_settings_all(self, ifaceobj, ifaceobj_getfunc, bridge_vlan_aware):
@@ -1870,7 +1974,7 @@ class bridge(Bridge, moduleBase):
                     # Add attributes specific to the vlan aware bridge
                     if bridge_vlan_aware:
                         self._apply_bridge_vlan_aware_port_settings_all(
-                                bportifaceobj, bridge_vids, bridge_pvid)
+                                bportifaceobj, ifaceobj_getfunc, bridge_vids, bridge_pvid)
                     elif self.warn_on_untagged_bridge_absence:
                         self._check_untagged_bridge(ifaceobj.name, bportifaceobj, ifaceobj_getfunc)
                 except exceptions.ReservedVlanException as e:
@@ -1913,7 +2017,7 @@ class bridge(Bridge, moduleBase):
         bridge_vids = self._get_bridge_vids(bridge_name, ifaceobj_getfunc)
         bridge_pvid = self._get_bridge_pvid(bridge_name, ifaceobj_getfunc)
         try:
-            self._apply_bridge_vlan_aware_port_settings_all(ifaceobj, bridge_vids, bridge_pvid)
+            self._apply_bridge_vlan_aware_port_settings_all(ifaceobj, ifaceobj_getfunc, bridge_vids, bridge_pvid)
         except Exception as e:
             self.log_error('%s: %s' % (ifaceobj.name, str(e)), ifaceobj)
             return
@@ -1975,7 +2079,6 @@ class bridge(Bridge, moduleBase):
              before. This is done this way to avoid calling this method on
              non vlan & bridge port interfaces thus wasting a bit less time
         """
-
         kind = None
         ifla_info_data = {}
 
@@ -2005,28 +2108,40 @@ class bridge(Bridge, moduleBase):
         #
         # vxlan-learning sync:
         #
+        user_brport_vxlan_learning_config = brport_ifaceobj.get_attr_value_first("vxlan-learning")
 
-        brport_vxlan_learning_config = brport_ifaceobj.get_attr_value_first("vxlan-learning")
-        # if vxlan-learning is defined by the user or via policy file we need
-        # to honor his config and not sync vxlan-learning with bridge-learning
+        if not user_brport_vxlan_learning_config:
+            # if vxlan-learning is not defined on the brport
 
-        if not brport_vxlan_learning_config:
-            # check policy file
-            brport_vxlan_learning_config = policymanager.policymanager_api.get_attr_default("vxlan", "vxlan-learning")
+            if user_config_brport_learning_nl is not None:
+                # if bridge-learning is defined on the brport use it's value to sync vxlan-learning
+                user_brport_vxlan_learning_config_nl = user_config_brport_learning_nl
 
-        # convert vxlan-learning string to netlink value (if None use brport-learning value instead)
-        brport_vxlan_learning_config_nl = utils.get_boolean_from_string(brport_vxlan_learning_config) \
-            if brport_vxlan_learning_config \
-            else cached_brport_learning
+            else:
+                # if bridge-learning is not defined, we check for policy and convert it into netlink format
+                brport_vxlan_learning_config = policymanager.policymanager_api.get_attr_default("vxlan", "vxlan-learning")
 
-        if brport_vxlan_learning_config_nl != self.cache.get_link_info_data_attribute(brport_name, Link.IFLA_VXLAN_LEARNING):
+                if brport_vxlan_learning_config is not None:
+                    user_brport_vxlan_learning_config_nl = utils.get_boolean_from_string(brport_vxlan_learning_config)
+
+                else:
+                    # None = no policy set, default to the current brport learning
+                    user_brport_vxlan_learning_config_nl = cached_brport_learning
+
+        else:
+            # if vxlan-learning is set we need to honor the user config
+            user_brport_vxlan_learning_config_nl = utils.get_boolean_from_string(user_brport_vxlan_learning_config)
+
+        if user_brport_vxlan_learning_config_nl != self.cache.get_link_info_data_attribute(
+            brport_name,
+            Link.IFLA_VXLAN_LEARNING
+        ):
             self.logger.info(
                 "%s: %s: vxlan learning and bridge learning out of sync: set vxlan-learning %s"
-                % (bridge_name, brport_name, "on" if brport_vxlan_learning_config_nl else "off")
+                % (bridge_name, brport_name, "on" if user_brport_vxlan_learning_config_nl else "off")
             )
-            ifla_info_data = {Link.IFLA_VXLAN_LEARNING: brport_vxlan_learning_config_nl}
+            ifla_info_data = {Link.IFLA_VXLAN_LEARNING: user_brport_vxlan_learning_config_nl}
             kind = "vxlan"
-
         # if kind and ifla_info_data are set they will be added to the
         # netlink request on the VXLAN brport, to sync IFLA_VXLAN_LEARNING
         return kind, ifla_info_data
@@ -2248,6 +2363,22 @@ class bridge(Bridge, moduleBase):
                                             continue
                                     except Exception as e:
                                         self.logger.debug('%s: %s: peerlink check: %s' % (ifname, brport_name, str(e)))
+
+                            if nl_attr == Link.IFLA_BRPORT_MULTICAST_ROUTER:
+
+                                if (brport_ifaceobj.link_kind & ifaceLinkKind.VXLAN
+                                    and brport_ifaceobj.link_privflags & ifaceLinkPrivFlags.BRIDGE_PORT) \
+                                    and (
+                                    (
+                                        self.vxlan_bridge_igmp_snooping_enable_port_mcrouter and utils.get_boolean_from_string(
+                                        self.get_bridge_mcsnoop_value(ifaceobj))
+                                    ) or cached_bridge_mcsnoop
+                                ):
+                                    # if policy "vxlan_bridge_igmp_snooping_enable_port_mcrouter" is on and mcsnoop is
+                                    # on (or mcsnoop is already enabled on the bridge, keep 'bridge-portmcrouter 2'
+                                    # on vxlan ports (if not set by the user)
+                                    if cached_value == 2:
+                                        continue
 
                             if default_netlink != cached_value:
                                 self.logger.info('%s: %s: %s: no configuration detected, resetting to default %s'
@@ -2683,11 +2814,11 @@ class bridge(Bridge, moduleBase):
                     self.logger.debug("%s: %s" % (ifname, str(e)))
 
         try:
-            self._up_bridge_mac(ifaceobj, ifaceobj_getfunc)
+            self._up_bridge_mac(ifaceobj, link_just_created, ifaceobj_getfunc)
         except Exception as e:
             self.logger.warning('%s: setting bridge mac address: %s' % (ifaceobj.name, str(e)))
 
-    def _get_bridge_mac(self, ifaceobj, ifname, ifaceobj_getfunc):
+    def _get_bridge_mac(self, ifaceobj, ifname, link_just_created, ifaceobj_getfunc):
         bridge_mac_iface = self.bridge_mac_iface.get(ifname)
 
         if bridge_mac_iface and bridge_mac_iface[0] and bridge_mac_iface[1]:
@@ -2722,16 +2853,20 @@ class bridge(Bridge, moduleBase):
 
             # first we need to make sure that the bridge mac is not already inherited from one of it's port
             bridge_ports = self._get_bridge_port_list_user_ordered(ifaceobj)
-            current_mac = self.cache.get_link_address(ifname)
 
-            for port in bridge_ports or []:
-                if not self.is_vxlan(ifaceobj_getfunc(port)):
-                    port_mac = self.cache.get_link_address(port)
+            # if the bridge was just created we need to set it's mac address to the first port and not look at the
+            # current bridge mac (the bridge driver probably chose the lowest mac of it's port)
+            if not link_just_created:
+                current_mac = self.cache.get_link_address(ifname)
 
-                    if current_mac == port_mac:
-                        self.logger.info("bridge mac is already inherited from %s" % port)
-                        self.bridge_mac_iface[ifname] = (port, port_mac)
-                        return self.bridge_mac_iface[ifname]
+                for port in bridge_ports or []:
+                    if not self.is_vxlan(ifaceobj_getfunc(port)):
+                        port_mac = self.cache.get_link_address(port)
+
+                        if current_mac == port_mac:
+                            self.logger.info("bridge mac is already inherited from %s" % port)
+                            self.bridge_mac_iface[ifname] = (port, port_mac)
+                            return self.bridge_mac_iface[ifname]
 
             for port in bridge_ports or []:
                 # iterate through the bridge-port list
@@ -2767,7 +2902,7 @@ class bridge(Bridge, moduleBase):
         if not ifaceobj.link_privflags & ifaceLinkPrivFlags.BRIDGE_VLAN_AWARE and bridge_mac and ifaceobj.get_attr_value('address'):
             self.iproute2.bridge_fdb_add(ifaceobj.name, bridge_mac, vlan=None, bridge=True, remote=None)
 
-    def _up_bridge_mac(self, ifaceobj, ifaceobj_getfunc):
+    def _up_bridge_mac(self, ifaceobj, link_just_created, ifaceobj_getfunc):
         """
         We have a day one bridge mac changing problem with changing ports
         (basically bridge mac changes when the port it inherited the mac from
@@ -2786,7 +2921,7 @@ class bridge(Bridge, moduleBase):
             return
 
         ifname = ifaceobj.name
-        mac_intf, bridge_mac = self._get_bridge_mac(ifaceobj, ifname, ifaceobj_getfunc)
+        mac_intf, bridge_mac = self._get_bridge_mac(ifaceobj, ifname, link_just_created, ifaceobj_getfunc)
         self.logger.debug("%s: _get_bridge_mac returned (%s, %s)"
                           %(ifname, mac_intf, bridge_mac))
 
@@ -2799,7 +2934,9 @@ class bridge(Bridge, moduleBase):
             cached_value = self.cache.get_link_address(ifname)
             self.logger.debug('%s: cached hwaddress value: %s' % (ifname, cached_value))
             bridge_mac_int = utils.mac_str_to_int(bridge_mac)
-            if cached_value and utils.mac_str_to_int(cached_value) == bridge_mac_int:
+
+            # if the bridge was just created (link_just_created) we should force-set the mac address
+            if not link_just_created and cached_value and utils.mac_str_to_int(cached_value) == bridge_mac_int:
                 # the bridge mac is already set to the bridge_mac_intf's mac
                 return
 

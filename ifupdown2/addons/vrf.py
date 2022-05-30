@@ -348,7 +348,7 @@ class vrf(Addon, moduleBase):
             table_id_start = self.vrf_table_id_start
         else:
             table_id_start = self.last_used_vrf_table + 1
-        for t in range(table_id_start, self.vrf_table_id_end):
+        for t in range(table_id_start, self.vrf_table_id_end + 1):
             if (not self.iproute2_vrf_map.get(t)
                     and t not in self.user_reserved_vrf_table):
                 self.last_used_vrf_table = t
@@ -937,7 +937,7 @@ class vrf(Addon, moduleBase):
         try:
             ifindex = self.cache.get_ifindex(ifacename)
         except Exception as e:
-            self.logger.debug("%s: vrf: close sockets error: %s" % str(e))
+            self.logger.debug("%s: vrf: close sockets error: %s" % (ifacename, str(e)))
             ifindex = 0
 
         if not ifindex:

@@ -9,6 +9,8 @@ import json
 import time
 import subprocess
 
+from distutils.util import strtobool
+
 try:
     from ifupdown2.lib.addon import AddonWithIpBlackList
     from ifupdown2.nlmanager.nlmanager import Link
@@ -226,8 +228,20 @@ class address(AddonWithIpBlackList, moduleBase):
                 module_name=self.__class__.__name__,
                 attr='l3_intf_arp_accept'
             ),
-            default=False
+            default=0
         )
+
+        try:
+            l3_intf_arp_accept_str = policymanager.policymanager_api.get_module_globals(
+                module_name=self.__class__.__name__,
+                attr="l3_intf_arp_accept"
+            )
+            try:
+                self.l3_intf_arp_accept = int(l3_intf_arp_accept_str)
+            except:
+                self.l3_intf_arp_accept = int(strtobool(l3_intf_arp_accept_str))
+        except:
+            self.l3_intf_arp_accept = 0
 
         self.l3_intf_default_gateway_set_onlink = utils.get_boolean_from_string(
             policymanager.policymanager_api.get_module_globals(
@@ -424,8 +438,7 @@ class address(AddonWithIpBlackList, moduleBase):
     def _get_hwaddress(self, ifaceobj):
         return utils.strip_hwaddress(ifaceobj.get_attr_value_first('hwaddress'))
 
-    def _process_bridge(self, ifaceobj, up, old_mac_addr=None):
-        hwaddress = self._get_hwaddress(ifaceobj)
+    def _process_bridge(self, ifaceobj, up, hwaddress, old_mac_addr=None):
         addrs = ifaceobj.get_attr_value_first('address')
         arp_accept = ifaceobj.get_attr_value_first('arp-accept')
         arp_accept = utils.boolean_support_binary(arp_accept)
@@ -442,7 +455,7 @@ class address(AddonWithIpBlackList, moduleBase):
                 if self.l3_intf_arp_accept:
                     if up:
                         self.write_file('/proc/sys/net/ipv4/conf/%s' % ifaceobj.name +
-                                        '/arp_accept', '1')
+                                        '/arp_accept', str(self.l3_intf_arp_accept))
                     else:
                         self.write_file('/proc/sys/net/ipv4/conf/%s' % ifaceobj.name +
                                         '/arp_accept', '0')
@@ -454,7 +467,8 @@ class address(AddonWithIpBlackList, moduleBase):
                 # mac address. The current code only checks for the statemanager for old 'hwaddress' attribute but
                 # couldn't find any. Now we save the mac addr before updating it, so we can later clear it from the fdb.
                 try:
-                    self.iproute2.bridge_fdb_del(bridgename, old_mac_addr, vlan)
+                    if utils.mac_str_to_int(old_mac_addr) != utils.mac_str_to_int(hwaddress):
+                        self.iproute2.bridge_fdb_del(bridgename, old_mac_addr, vlan)
                 except:
                     pass
             if up:
@@ -1072,7 +1086,7 @@ class address(AddonWithIpBlackList, moduleBase):
 
         try:
             # Handle special things on a bridge
-            self._process_bridge(ifaceobj, True, self.process_hwaddress(ifaceobj))
+            self._process_bridge(ifaceobj, True, *self.process_hwaddress(ifaceobj))
         except Exception as e:
             self.log_error('%s: %s' % (ifaceobj.name, str(e)), ifaceobj)
 
@@ -1154,9 +1168,9 @@ class address(AddonWithIpBlackList, moduleBase):
                         hwaddress = self.cache.get_link_address(lower)
                         break
                 if not hwaddress:
-                    return
+                    return None, None
             else:
-                return
+                return None, None
 
         if not ifupdownflags.flags.PERFMODE:  # system is clean
             running_hwaddress = self.cache.get_link_address(ifaceobj.name)
@@ -1183,7 +1197,7 @@ class address(AddonWithIpBlackList, moduleBase):
                     for l in ifaceobj.lowerifaces:
                         self.netlink.link_up(l)
 
-        return old_mac_addr
+        return hwaddress, old_mac_addr
 
     def _down(self, ifaceobj, ifaceobj_getfunc=None):
         try:
@@ -1232,7 +1246,10 @@ class address(AddonWithIpBlackList, moduleBase):
             # address.
 
             # Handle special things on a bridge
-            self._process_bridge(ifaceobj, False)
+            hwaddress = self._get_hwaddress(ifaceobj)
+            if not hwaddress:
+                hwaddress = self.cache.get_link_address(ifaceobj.name)
+            self._process_bridge(ifaceobj, False, hwaddress, None)
         except Exception as e:
             self.logger.debug('%s : %s' %(ifaceobj.name, str(e)))
             pass
@@ -1447,6 +1464,8 @@ class address(AddonWithIpBlackList, moduleBase):
         alias = self.cache.get_link_alias(ifaceobjrunning.name)
         if alias:
             ifaceobjrunning.update_config('alias', alias)
+
+        ifaceobjrunning.update_config("hwaddress", self.cache.get_link_address(ifaceobjrunning.name))
 
     _run_ops = {
         'pre-up': _pre_up,
