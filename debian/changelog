@@ -1,4 +1,4 @@
-ifupdown2 (3.1.0-alphalink2) bullseye-test; urgency=medium
+ifupdown2 (3.1.0-alphalink3) bullseye-test; urgency=medium
 
   [ Julien Fortin ]
    * New: ifquery-check now validates admin state
