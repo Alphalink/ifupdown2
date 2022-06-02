@@ -1,4 +1,4 @@
-ifupdown2 (3.1.0-alphalink3) bullseye-test; urgency=medium
+ifupdown2 (3.1.0-alphalink5) bullseye-test; urgency=medium
 
   [ Julien Fortin ]
    * New: ifquery-check now validates admin state
@@ -57,7 +57,7 @@ ifupdown2 (3.1.0-alphalink3) bullseye-test; urgency=medium
   * Add: ARP IP bond check
   * Fix: dhcp client killed on no wait policy
 
- -- Adrien Banlin <a.banlin@alphalink.fr>  Wed, 25 May 2022 14:13:51 +0200
+ -- Adrien Banlin <a.banlin@alphalink.fr>  Thu, 02 Jun 2022 16:13:07 +0200
 
 ifupdown2 (3.0.0-1) unstable; urgency=medium
 
