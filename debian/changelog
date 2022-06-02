@@ -1,0 +1,401 @@
+ifupdown2 (3.1.0-alphalink5) bullseye-test; urgency=medium
+
+  [ Julien Fortin ]
+   * New: ifquery-check now validates admin state
+   * New: bond: bond mac should always be inherited from it's first slave
+
+   * New: macvlan/addressvirtual features:
+   - check interface name lenght and warn if len > 15
+   - sync macvlan forwarding state with lower-device
+
+   * New: vxlan features:
+    - Single vxlan device support (bridge-vlan-vni-map)
+    New attributes:
+    - vxlan-mcastgrp-map (vxlan multicast group for single-vxlan device)
+    - vxlan-vnifilter (vxlan vni filter for single-vxlan device)
+    - vxlan-remoteip-map (static HREP entries for static single vxlan dev)
+    - vxlan-tos (ToS value)
+    - vxlan-udp-csum (whether to perform checksumming or not)
+    New policy:
+    - vxlan-support-mix-dev-types: allow mix of traditional and single
+    vxlan device (default to yes)
+
+   * New: bridge features:
+    - add multi bridge support for bridge_set_static_mac_from_port=yes
+    - check if bridge mac is already inherited from a port
+    - detect VXLAN mis-config VNI "bridge-learning=on" and warn
+    - detect and warn when arp suppression is enabled but no vlan config
+    - bridge-arp-nd-suppress with ifquery --with-default if policy is set
+    - enable ipv6 on SVD brport
+    - enable forwarding on dhcp bridges (fixes: #179)
+    New attribute:
+    - bridge-vlan-vni-map (single vxlan device support)
+    New policy:
+    - bridge_always_up_dummy_brport
+
+   * New: address features:
+    - warn user if L3-SVI is configured with "ip-forward off"
+    - enable ipv6 before adding new address
+    New policies:
+    - check_l3_svi_ip_forwarding (check ip forward on l3 svi, default off)
+    - ip_blacklist: blacklist specific ip addresses
+
+   * New: vlan features:
+    - check vlan-id misconfiguration and print warning
+    New attribute:
+    - vlan-bridge-binding (if enabled link state is no longer automatically
+    transferred from the lower device)
+
+    * Fix: address: remove stale fdb entry for svi (when hwaddress is used)
+    * Fix: usercmds: Set environment just like the original ifupdown
+    * Fix: update mako template warning (python3-mako)
+    * Fix: batman_adv: fix unresolved reference
+
+  [ Adrien Banlin ]
+  * Add: driver policy
+  * Add: dad handling per itf acting upon ipv6_dad_handling_enable policy
+  * Add: ARP IP bond check
+  * Fix: dhcp client killed on no wait policy
+
+ -- Adrien Banlin <a.banlin@alphalink.fr>  Thu, 02 Jun 2022 16:13:07 +0200
+
+ifupdown2 (3.0.0-1) unstable; urgency=medium
+
+   * New: python3 support
+   * New: attribute alias support
+   * New: bridge-always-up attribute
+   * New: set bridge mtu with policy default
+   * New: ES bond with "es-sys-mac" attribute
+   * New: vxlan attribute: vxlan-mcastgrp-map
+   * New: support for "veth-peer-name" attribute
+   * New: dhcp policy: dhclient_retry_on_failure
+   * New: support for marking interfaces as mgmt interfaces
+   * New: bridge-vlan-vni-map attribute (single vxlan device)
+   * New: dhcp: skipping dhcp configuration if link-down yes
+   * New: vrf-slave: keep vlan down if lower device has "link-down yes"
+   * New: vxlan: support for vxlan-svcnodeip6 and vxlan-mcastgrp6 (fixes #43)
+   * New: support for add ovs-ports-condone-regex attribute (openvswitch)
+   * Fix: dry-run exceptions
+   * Fix: bond enslavement ordering
+   * Fix: process MTU before addrgen
+   * Fix: set bridge MTU after bridge creation
+   * Fix: ifquery-running: incorrect displayed data
+   * Fix: tunnel configuration compatibility with ifupdown1
+   * Fix: start-networking script is back to handle mgmt & hotplug cases
+   * Fix: devices matching with ".{0,13}\-v" could get removed by ifreload
+   * Fix: mstpctl: check mstpctl-stp and bridge-stp and fix bridge cache update
+   * Removing python-argcomplete dependency
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 04 Aug 2020 23:42:42 +0200
+
+ifupdown2 (2.0.2-1) unstable; urgency=medium
+
+  * New: addons: ethtool: add support for "ethtool_ignore_errors" policy
+  * New: addons: dhcp: if mgmt vrf context exec dhclient in default vrf
+  * Fix: nlpacket: don't raise an exception on 24 bytes mac address (#140)
+  * Fix: IFLA_INFO_KIND: decode tunnel data
+  * Fix: XFRM for 2.x release
+  * Fix: addons.conf: remove duplicate entry for tunnel pre-up
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Wed, 04 Mar 2020 23:42:42 +0100
+
+ifupdown2 (2.0.1-1) unstable; urgency=medium
+
+  * New argv option: --nldebug to print netlink debug message
+  * New: ethtool: nics (GRO, LRO GSO, TSO, UFO, TX and RX) offload attributes
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 31 Dec 2019 15:21:06 +0100
+
+ifupdown2 (2.0.0-1) unstable; urgency=medium
+
+  * Introduction of the live netlink cache
+  * Refactoring and PEP8 fixes
+  * Install systemd ifupdown2.netowrking.service and ifup.service
+  * Addons: bond: bond-primary attributes (closes: #9)
+  * Addons: address-virtual: vrrp support
+  * Addons: address: add arp-accept option
+  * Addons: tunnel: adding "tunnel-" prefix to every attributes
+  * Loopback interface won't go down (unless link-down yes)
+  * Macvlans (address-virtual) can now be configured without ips
+  * Add support for vxlan multicast group (vxlan-mcastgrp)
+  * New sets of poliicies:
+       - bridge polcy for vxlan port: bridge-vxlan-arp-nd-suppres (ON/off)
+       - bridge policy for vxlan port: bridge_vxlan_port_learning (ON/off)
+       - bridge policy for vxlan port:
+               vxlan_bridge_igmp_snooping_enable_port_mcrouter (1/0)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 01 Oct 2019 23:42:42 +0200
+
+ifupdown2 (1.2.8-1) unstable; urgency=medium
+
+  * New: Add policy dhcp6-duid to specify DUID type to be used for IPv6 interfaces
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Thu, 11 Jul 2019 23:42:42 +0200
+
+ifupdown2 (1.2.7-1) unstable; urgency=medium
+
+  * New: Add bridge-ports-condone-regex option (closes #117)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 09 Jul 2019 23:42:42 +0200
+
+ifupdown2 (1.2.6-1) unstable; urgency=medium
+
+  * Fix: AttributeError exception in bridge module (fixes #90)
+  * Fix: ifupdownaddons: LinkUtils fix cmd concatenation (closes: #930839)
+  * New. policymanager: merge module policy instead of overriding duplicates
+  * New: set default mtu on user defined device (via link-type)
+  * New: add support for vxlan-ttl attribute
+  * New: add support for vrrp attribute
+  * New: introduce new bridge policy:
+        "vxlan_bridge_igmp_snooping_enable_port_mcrouter"
+  * New: link-down yes will also down macvlans
+  * New: XFRM addon module
+  * New: Add policy to wait for IPv6 link local address to be available
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Sun, 23 Jun 2019 23:42:42 -1000
+
+ifupdown2 (1.2.5-1) unstable; urgency=medium
+
+  * Fix: ifupdown2 scripts: log warning on EACCES exception (Fixes #89)
+  * Fix: debian: install sysvinit script (closes: #918775)
+  * Fix: debian: postinst: remove diversion after upgrade from stretch
+         (closes: #919443)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 21 Jan 2019 23:42:42 +8000
+
+ifupdown2 (1.2.4-1) unstable; urgency=medium
+
+  * Fix: statemanager directory path customization via ifupdown2.conf
+         (closes: #918832)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Fri, 11 Jan 2019 23:42:42 +0000
+
+ifupdown2 (1.2.3-1) unstable; urgency=medium
+
+  * Fix: log: use stderr if syslog initialization fails (closes: #917534)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Sun, 30 Dec 2018 23:42:42 +0700
+
+ifupdown2 (1.2.2-1) unstable; urgency=medium
+
+  * New: add support for B.A.T.M.A.N. adv. attributes
+  * New: support for new iproute2 format (bridge vlan show)
+  * New: add new checks for existing device with vxlan attributes
+  * Fix: pypi install: local addons modules should be loaded first
+  * Fix: link-down yes on vrf slaves
+  * Fix: nlmanager: use strerror to format kernel error
+  * Fix: ethtool: FEC: translate None and NotSupported values to link-fec off
+  * Fix: man: remove non-implemented -m option (closes: #905572)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Thu, 20 Dec 2018 23:42:42 +0000
+
+ifupdown2 (1.2.1) UNRELEASED; urgency=medium
+
+  * Fix #54: address module new l3_intf_default_gateway_set_onlink policy
+  * Fix: Link down does not work on any intf configured in a VRF
+  * Add: ethtool: add link-speed 10 to valid values array
+  * Add: address: add l3_intf_arp_accept policy to control ARP_ACCEPT
+  * Add: warning when bridge attribute are used on non br[port] intf
+  * Add: point-to-point protocol (ppp) addon to create/configure ppp interfaces
+  * Add: tunnel support (gretap, ipip, sit, vti, ip6gre, ipip6, ip6ip6, vti6)
+  * Add: 0/1/on/off/yes/no support to ip[6]-forward attribute
+  * Add: address module_globals policy l3_intf_arp_accept to control ARP_ACCEPT
+  * addressvirtual module_globals "addressvirtual_with_route_metric" policy
+  * Closes: ethtool: link-fec: local variable 'fec_attrs'
+            referencede before assignment
+  * Fix: ifquery -r incorrect for address-virtual and vrf configuration under
+         an interface
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Wed, 24 Oct 2018 23:42:42 +0200
+
+ifupdown2 (1.2.0) UNRELEASED; urgency=medium
+
+  * Package architecture refactoring and cleanups
+  * Package can be build/install as debian, pip or rpm package
+  * Makefile to easily perform tasks (i.e.: install, build, test, upload..)
+  * VRF slaves: add support for link-down yes
+  * addressvirtual: macvlan: add default metric to ip4 and ip6
+  * Closes #48: Run up/down on "manual" interfaces, but ignore any errors.
+  * Closes #58: address addon "vlan_aware_bridge_address_support" policy
+  * Traditional bridge support for mstpctl attr: (portautoedge, portrestrrole)
+  * Configuration for IPv6 link-local auto-generate mode, new attributes:
+        ipv6-addrgen (address addon)
+        address-virtual-ipv6-addrgen (addressvirtual addon)
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 25 Jun 2018 23:42:42 +0200
+
+ifupdown2 (1.1.18) UNRELEASED; urgency=medium
+
+  * Fix: Link down does not work on SVI configured in a VRF
+  * Fix: ifreload causes MTU to drop on bridge SVIs
+  * Fix: addons: addressvirtual: check if SVI name is first in routing table
+  * Fix: ifreload error on deleting bond slaves from an already configured bond
+  * Fix: ifupdown2 error is confusing when netmask is specified for vxlan-local-tunnelip
+  * Fix: ifupdown2 syntax check needed for vxlan interfaces
+  * Fix: vxlan-ageing default timer doesn't align with bridge-ageing
+  * Fix: Error with "ifreload -a -n" when MGMT VRF is not Applied
+  * Fix: using reserved VLAN range reports error but ifreload returns 0
+  * Fix: unable to set bridge-portmcrouter to "2"
+  * Fix: vxlan syntax-check warn on missing vxlan-local-tunnelip
+  * Fix: traditional bridge svi breaks when extra bridge added
+  * Fix: github #39: addons: vrf: fix vrf slave link kind
+  * New. Enabled: addons: vxlan: add support for vxlan-port attribute
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Thu, 12 Apr 2018 11:10:04 +0200
+
+ifupdown2 (1.1.17) UNRELEASED; urgency=medium
+
+  * Fix: ip[6]-forward attributes not set at boot
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Thu, 08 Feb 2018 09:48:37 +0100
+
+ifupdown2 (1.1.16) UNRELEASED; urgency=medium
+
+  * Fix: python exception on macvlans address dump
+  * Fix: eth0 doesn't acquire DHCP address when mgmt VRF is enabled
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 09 Jan 2018 02:02:58 +0100
+
+ifupdown2 (1.1.15) UNRELEASED; urgency=medium
+
+  * New. Enabled: bridge: add support for bridge-l2protocol-tunnel
+  * New. Enabled: bridge attributes, when removed reset to default
+  * New. Enabled: vxlan attributes, when removed reset to default
+  * New. Enabled: improve handling of optional resources (if missing bridge-utils/ethtool)
+  * Fix: policy "iface_defaults" not supported for MTU
+  * Fix: address module: handling of ipv4 & ipv6 (add/remove)
+  * Fix: warning for vlan reserved range
+  * Fix: MTU handling on bridge SVIs
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Wed, 22 Nov 2017 19:07:43 +0100
+
+ifupdown2 (1.1.14) UNRELEASED; urgency=medium
+
+  * New. Enabled: default policy for bridge MAC address
+  * Fix: ethtool: don't set link speed and duplex if autoneg is on
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Wed, 25 Oct 2017 23:12:27 +0200
+
+ifupdown2 (1.1.13) UNRELEASED; urgency=medium
+
+  * Fix: VRF: ssh session not killed on ifreload
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Fri, 15 Sep 2017 22:43:12 +0200
+
+ifupdown2 (1.1.12) UNRELEASED; urgency=medium
+
+  * New. Enabled: mpls-enable attribute
+  * New. Enabled: bond and bridge module moved to netlink configuration
+  * New. Enabled: handle a mix of auto and specified vrf table ids
+  * Fix: igmp attribute reset to defaults when removed from config
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 07 Aug 2017 22:14:03 +0200
+
+ifupdown2 (1.1.11) UNRELEASED; urgency=medium
+
+  * Fix: link-down attribute not applied on slave ports
+  * Fix: bug that prevented config of mtu below 1280
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Thu, 18 May 2017 12:45:21 -0700
+
+ifupdown2 (1.1.10) UNRELEASED; urgency=medium
+
+  * New. Enabled: drop the dependency to pkg_resources, hardcode version number (closes: #855401)
+  * New. Enabled: adjust allow-hotplug behavior to ifupdown (closes: #855598)
+  * New. Enabled: bond-lacp-rate support slow/fast argument
+  * New. Enabled: ifquery --syntax-help: add support for json output
+  * New. Enabled: vlan: add new attribute 'vlan-protocol'
+  * New. Enabled: address: add new attribute 'ip6-forward'
+  * New. Enabled: bridge: add new attribute 'bridge-mcstats'
+  * New. Enabled: bridge: add new attribute 'bridge-vlan-stats'
+  * New. Enabled: bridge: add new attribute 'bridge-vlan-protocol'
+  * New. Enabled: bridge: add new attribute 'bridge-arp-nd-suppress'
+  * Fix: bond: add attribute bond-(up|down)delay
+  * Fix: bridge-vids: --syntax-check accepts legacy syntax
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 17 Apr 2017 06:18:04 +0200
+
+ifupdown2 (1.1.9) UNRELEASED; urgency=medium
+
+  * New. Enabled: support for bridge-learning attribute
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 06 Feb 2017 13:22:51 -0800
+
+ifupdown2 (1.1.8) UNRELEASED; urgency=medium
+
+  * New. Enabled: update link-speed values: add 25G and 50G
+  * New. Enabled: new 'link-down' [yes|no] attribute to keep link down
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 17 Jan 2017 08:39:29 +0100
+
+ifupdown2 (1.1.7) UNRELEASED; urgency=medium
+
+  * New. Enabled: fix for inet and inet6 dhcp on the same interface
+  * New. Enabled: syntax check to warn on common configuration mistakes
+  * New. Enabled: addons: bridge: disable ip fwding on a bridge with no ip
+    and no upperifaces
+  * Fix: fixes for MTU handling
+  * Fix: dhcpv6 fails if interface doesn't have link-local addr
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Wed, 07 Dec 2016 05:48:45 +0100
+
+ifupdown2 (1.1.6) UNRELEASED; urgency=medium
+
+  * Closes: github #14. add environment variables passed to user scripts
+  * New. Enabled: addons may provide a list of ifupdown scripts to ignore
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Mon, 19 Sep 2016 16:37:36 -0700
+
+ifupdown2 (1.1.5) UNRELEASED; urgency=medium
+
+  * Fix: handling of EXISTS errors on address add
+  * Fix: handling of mtu on addressvirtual macvlan devices
+  * Fix: mako namespace handling
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Fri, 16 Sep 2016 12:48:04 -0700
+
+ifupdown2 (1.1.4) UNRELEASED; urgency=medium
+
+  * Performance improvements
+  * New. Enabled: sbin: start-networking: support hotplug class from init script
+  * New. Enabled: support for classical numerical bond modes
+  * New. Enabled: extend ifquery support for mstpctl addons
+  * New. Enabled: each addon may perform semantic and syntax checks by
+    implementing a custom method
+  * Fix: Support for address-virtual lines under a vrf slave
+  * Fix: Defaults for link attributes were not applied
+  * Fix: Disable IPv6 duplicate address detection on VRR interfaces
+  * Fix: ifquery to extract vlan-id from iface if not preset
+  * Fix: ifquery -c bridge pvid error on a valid config
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Fri, 29 Jul 2016 08:55:50 -0700
+
+ifupdown2 (1.1.3) UNRELEASED; urgency=medium
+
+  * Fix: Interface configuration parsing error when keyword vlan
+    is the interface name.
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Sun, 05 Jun 2016 08:55:50 -0700
+
+ifupdown2 (1.1.2) UNRELEASED; urgency=medium
+
+  * Fix: checks for invalid address-virtual attributes
+  * New. Deprecated: `mstpctl-stp` attribute
+  * New. Deprecated: lacp parameters: bond-ad-sys-priority, bond-ad-sys-mac-addr
+  * New. Enabled: addon module for configuring vrf
+  * New. Enabled: bridge: display warning when (in vlan unware bridge)
+    an untagged bridge is not configured
+  * New. Enabled: adjusting MTU for vlan devices depending on lower device mtu
+  * New. Enabled: introduce checks for reserved vrf table names
+  * New. Enabled: ifquery: new option '--with-defaults' to include default
+    attributes
+  * New. Enabled: bridge: disabling ipv6 on bridge if any VXLAN port
+  * New. Enabled: vrf awareness in dhcp addon module
+
+ -- Julien Fortin <julien@cumulusnetworks.com>  Tue, 3 May 2016 14:42:42 -0700
+
+ifupdown2 (1.1) unstable; urgency=low
+
+  * Initial release.
+
+ -- Roopa Prabhu <roopa@cumulusnetworks.com>  Thu, 20 Aug 2015 06:14:24 -0700
