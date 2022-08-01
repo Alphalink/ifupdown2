@@ -1,3 +1,10 @@
+ifupdown2 (3.1.1-alphalink1) bullseye-test; urgency=medium
+
+  * Non-maintainer upload.
+  * nlcache: remove heartbeat patch (#20658)
+
+ -- Adrien Banlin <a.banlin@alphalink.fr>  Mon, 01 Aug 2022 17:17:23 +0200
+
 ifupdown2 (3.1.0-alphalink5) bullseye-test; urgency=medium
 
   [ Julien Fortin ]
