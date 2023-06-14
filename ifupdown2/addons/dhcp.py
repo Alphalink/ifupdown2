@@ -7,6 +7,7 @@
 import re
 import time
 import socket
+import logging
 
 try:
     from ifupdown2.lib.addon import Addon
@@ -15,7 +16,7 @@ try:
     import ifupdown2.ifupdown.policymanager as policymanager
     import ifupdown2.ifupdown.ifupdownflags as ifupdownflags
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceLinkPrivFlags, ifaceStatus
     from ifupdown2.ifupdown.utils import utils
 
     from ifupdown2.ifupdownaddons.dhclient import dhclient
@@ -27,7 +28,7 @@ except (ImportError, ModuleNotFoundError):
     import ifupdown.policymanager as policymanager
     import ifupdown.ifupdownflags as ifupdownflags
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceLinkPrivFlags, ifaceStatus
     from ifupdown.utils import utils
 
     from ifupdownaddons.dhclient import dhclient
@@ -149,7 +150,7 @@ class dhcp(Addon, moduleBase):
             dhclient_cmd_prefix = None
             dhcp_wait = policymanager.policymanager_api.get_attr_default(
                 module_name=self.__class__.__name__, attr='dhcp-wait')
-            wait = not str(dhcp_wait).lower() == "no"
+            wait = str(dhcp_wait).lower() != "no"
             dhcp6_ll_wait = policymanager.policymanager_api.get_iface_default(module_name=self.__class__.__name__, \
                 ifname=ifaceobj.name, attr='dhcp6-ll-wait')
             try:

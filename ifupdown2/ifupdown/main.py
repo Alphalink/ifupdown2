@@ -35,7 +35,6 @@ except (ImportError, ModuleNotFoundError):
 
 log = logging.getLogger()
 configmap_g = None
-lockfile = "/run/network/.lock"
 
 
 class Ifupdown2:
@@ -70,7 +69,7 @@ class Ifupdown2:
             self.read_config()
             self.init(stdin_buffer)
 
-            if self.op != 'query' and not utils.lockFile(lockfile):
+            if self.op != 'query' and not utils.lockFile(self.args.lockfile):
                 log.error("Another instance of this program is already running.")
                 return Status.Client.STATUS_ALREADY_RUNNING
 
@@ -113,7 +112,7 @@ class Ifupdown2:
         if hasattr(self.args, 'interfacesfile') and self.args.interfacesfile != None:
             # Check to see if -i option is allowed by config file
             # But for ifquery, we will not check this
-            if (not self.op == 'query' and
+            if (self.op != 'query' and
                         configmap_g.get('disable_cli_interfacesfile', '0') == '1'):
                 log.error('disable_cli_interfacesfile is set so users '
                           'not allowed to specify interfaces file on cli.')

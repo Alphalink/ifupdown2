@@ -15,7 +15,7 @@ try:
     from ifupdown2.lib.addon import AddonWithIpBlackList
     from ifupdown2.nlmanager.nlmanager import Link
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceType, ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus, iface
     from ifupdown2.ifupdown.utils import utils
 
     from ifupdown2.ifupdownaddons.dhclient import dhclient
@@ -31,7 +31,7 @@ except (ImportError, ModuleNotFoundError):
     from lib.addon import AddonWithIpBlackList
     from nlmanager.nlmanager import Link
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceType, ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus, iface
     from ifupdown.utils import utils
 
     from ifupdownaddons.dhclient import dhclient
@@ -238,9 +238,9 @@ class address(AddonWithIpBlackList, moduleBase):
             )
             try:
                 self.l3_intf_arp_accept = int(l3_intf_arp_accept_str)
-            except:
+            except ValueError:
                 self.l3_intf_arp_accept = int(strtobool(l3_intf_arp_accept_str))
-        except:
+        except Exception:
             self.l3_intf_arp_accept = 0
 
         self.l3_intf_default_gateway_set_onlink = utils.get_boolean_from_string(
@@ -469,7 +469,7 @@ class address(AddonWithIpBlackList, moduleBase):
                 try:
                     if utils.mac_str_to_int(old_mac_addr) != utils.mac_str_to_int(hwaddress):
                         self.iproute2.bridge_fdb_del(bridgename, old_mac_addr, vlan)
-                except:
+                except Exception:
                     pass
             if up:
                 # check statemanager to delete the old entry if necessary
@@ -835,19 +835,25 @@ class address(AddonWithIpBlackList, moduleBase):
                     self.sysfs.link_set_mtu(ifaceobj.name, mtu_str=self.default_mtu, mtu_int=self.default_mtu_int)
                 return
 
-            if (ifupdownconfig.config.get('adjust_logical_dev_mtu', '1') != '0'
-                and ifaceobj.lowerifaces):
-                # set vlan interface mtu to lower device mtu
-                if (ifaceobj.link_kind & ifaceLinkKind.VLAN):
-                    lower_iface = ifaceobj.lowerifaces[0]
-                    lower_iface_mtu_int = self.cache.get_link_mtu(lower_iface)
+            # set vlan interface mtu to lower device mtu
+            if (
+                ifupdownconfig.config.get('adjust_logical_dev_mtu', '1') != '0'
+                and ifaceobj.lowerifaces
+                and ifaceobj.link_kind & ifaceLinkKind.VLAN
+            ):
+                lower_iface = ifaceobj.lowerifaces[0]
+                lower_iface_mtu_int = self.cache.get_link_mtu(lower_iface)
 
-                    if lower_iface_mtu_int != cached_link_mtu:
-                        self.sysfs.link_set_mtu(ifaceobj.name, mtu_str=str(lower_iface_mtu_int), mtu_int=lower_iface_mtu_int)
+                if lower_iface_mtu_int != cached_link_mtu:
+                    self.sysfs.link_set_mtu(ifaceobj.name, mtu_str=str(lower_iface_mtu_int), mtu_int=lower_iface_mtu_int)
 
-        elif (not (ifaceobj.name == 'lo') and not ifaceobj.link_kind and
-              not (ifaceobj.link_privflags & ifaceLinkPrivFlags.BOND_SLAVE) and
-              self.default_mtu):
+        elif (
+            ifaceobj.name != 'lo'
+            and not ifaceobj.link_kind
+            and not (ifaceobj.link_privflags & ifaceLinkPrivFlags.BOND_SLAVE)
+            and self.default_mtu
+            and cached_link_mtu != self.default_mtu_int
+        ):
             # logical devices like bridges and vlan devices rely on mtu
             # from their lower devices. ie mtu travels from
             # lower devices to upper devices. For bonds mtu travels from
@@ -856,8 +862,7 @@ class address(AddonWithIpBlackList, moduleBase):
             # config by the kernel in play, we try to be cautious here
             # on which devices we want to reset mtu to default.
             # essentially only physical interfaces which are not bond slaves
-            if cached_link_mtu != self.default_mtu_int:
-                self.sysfs.link_set_mtu(ifaceobj.name, mtu_str=self.default_mtu, mtu_int=self.default_mtu_int)
+            self.sysfs.link_set_mtu(ifaceobj.name, mtu_str=self.default_mtu, mtu_int=self.default_mtu_int)
 
     def _set_bridge_forwarding(self, ifaceobj):
         """ set ip forwarding to 0 if bridge interface does not have a
@@ -1074,6 +1079,11 @@ class address(AddonWithIpBlackList, moduleBase):
         self.process_mtu(ifaceobj, ifaceobj_getfunc)
         self.up_ipv6_addrgen(ifaceobj)
 
+        try:
+            hwaddress, old_mac_addr = self.process_hwaddress(ifaceobj)
+        except Exception as e:
+            self.log_error('%s: %s' % (ifaceobj.name, str(e)), ifaceobj)
+
         if addr_method not in ["dhcp", "ppp"]:
             self.process_addresses(ifaceobj, ifaceobj_getfunc, force_reapply)
         else:
@@ -1086,7 +1096,7 @@ class address(AddonWithIpBlackList, moduleBase):
 
         try:
             # Handle special things on a bridge
-            self._process_bridge(ifaceobj, True, *self.process_hwaddress(ifaceobj))
+            self._process_bridge(ifaceobj, True, hwaddress, old_mac_addr)
         except Exception as e:
             self.log_error('%s: %s' % (ifaceobj.name, str(e)), ifaceobj)
 
@@ -1183,12 +1193,11 @@ class address(AddonWithIpBlackList, moduleBase):
 
         if hwaddress_int != utils.mac_str_to_int(running_hwaddress):
             slave_down = False
-            if ifaceobj.link_kind & ifaceLinkKind.BOND:
+            if ifaceobj.link_kind & ifaceLinkKind.BOND and ifaceobj.lowerifaces:
                 # if bond, down all the slaves
-                if ifaceobj.lowerifaces:
-                    for l in ifaceobj.lowerifaces:
-                        self.netlink.link_down(l)
-                    slave_down = True
+                for l in ifaceobj.lowerifaces:
+                    self.netlink.link_down(l)
+                slave_down = True
             try:
                 self.netlink.link_set_address(ifaceobj.name, hwaddress, hwaddress_int)
                 old_mac_addr = running_hwaddress
@@ -1411,8 +1420,7 @@ class address(AddonWithIpBlackList, moduleBase):
         # removed from the configuration file but the IP is still configured on
         # the device, so we need to mark them as FAIL (we will only mark them
         # as failure on the first sibling).
-        if ifaceobj.flags & iface.HAS_SIBLINGS:
-            if not ifaceobj.flags & iface.YOUNGEST_SIBLING:
+        if ifaceobj.flags & iface.HAS_SIBLINGS and not ifaceobj.flags & iface.YOUNGEST_SIBLING:
                 return
 
         all_stanza_user_config_ip = self.cache.get_user_configured_addresses(ifaceobj_list)

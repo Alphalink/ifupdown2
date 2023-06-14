@@ -15,7 +15,7 @@ try:
 
     from ifupdown2.nlmanager.nlmanager import Link
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus, iface
     from ifupdown2.ifupdown.utils import utils
     from ifupdown2.ifupdown.statemanager import statemanager_api as statemanager
     from ifupdown2.ifupdownaddons.cache import *
@@ -31,7 +31,7 @@ except (ImportError, ModuleNotFoundError):
 
     from nlmanager.nlmanager import Link
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus, iface
     from ifupdown.utils import utils
     from ifupdown.statemanager import statemanager_api as statemanager
 
@@ -1028,7 +1028,6 @@ class vxlan(Vxlan, moduleBase):
         return parsed_maps
 
     def single_vxlan_device_vni_filter(self, ifaceobj, vxlan_mcast_grp):
-        vnis = []
         vnisd = {}
         for vlan_vni_map in ifaceobj.get_attr_value("bridge-vlan-vni-map"):
             try:
@@ -1320,14 +1319,14 @@ class vxlan(Vxlan, moduleBase):
             for vni, ip in (vxlan_mcast_grp_map or {}).items():
                 try:
                     old_vxlan_remote_ip_map[vni].remove(ip)
-                except:
+                except Exception:
                     pass
 
             for vni, ips in old_vxlan_remote_ip_map.items():
                 for ip in ips:
                     try:
                         self.iproute2.bridge_fdb_del_raw(ifaceobj.name, "00:00:00:00:00:00 dst %s src_vni %s" % (ip, vni))
-                    except:
+                    except Exception:
                         pass
 
     @staticmethod
@@ -1650,7 +1649,7 @@ class vxlan(Vxlan, moduleBase):
         if not self.cache.link_exists(ifname):
             return
 
-        if not self.cache.get_link_kind(ifname) == 'vxlan':
+        if self.cache.get_link_kind(ifname) != 'vxlan':
             return
 
         cached_vxlan_ifla_info_data = self.cache.get_link_info_data(ifname)

@@ -13,7 +13,7 @@ from collections import deque
 
 try:
     from ifupdown2.lib.addon import AddonWithIpBlackList
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceType, ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus
     from ifupdown2.ifupdown.utils import utils
 
     from ifupdown2.nlmanager.nlpacket import Link
@@ -28,7 +28,7 @@ try:
     import ifupdown2.ifupdown.ifupdownconfig as ifupdownconfig
 except (ImportError, ModuleNotFoundError):
     from lib.addon import AddonWithIpBlackList
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceType, ifaceLinkKind, ifaceLinkPrivFlags, ifaceStatus
     from ifupdown.utils import utils
 
     from nlmanager.nlpacket import Link
@@ -107,7 +107,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                 self.logger.info('address metric support: KO')
 
     @classmethod
-    def addr_metric_support(cls):
+    def get_addr_metric_support(cls):
         return cls.ADDR_METRIC_SUPPORT
 
     @classmethod
@@ -286,7 +286,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
         ]:
             for macvlan_ifacename in glob.glob("/sys/class/net/%s*" % macvlan_prefix):
                 macvlan_ifacename = os.path.basename(macvlan_ifacename)
-                if not self.cache.link_exists(macvlan_ifacename) or not self.cache.get_link_kind(macvlan_ifacename) == "macvlan":
+                if not self.cache.link_exists(macvlan_ifacename) or self.cache.get_link_kind(macvlan_ifacename) != "macvlan":
                     continue
                 hwaddress.append(self.cache.get_link_address(macvlan_ifacename))
                 self.netlink.link_del(os.path.basename(macvlan_ifacename))
@@ -420,9 +420,8 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
         ifname = ifaceobj.name
 
         update_mtu = lower_iface_mtu = lower_iface_mtu_str = None
-        if ifupdownconfig.config.get("adjust_logical_dev_mtu", "1") != "0":
-            if ifaceobj.lowerifaces and intf_config_list:
-                update_mtu = True
+        if ifupdownconfig.config.get("adjust_logical_dev_mtu", "1") != "0" and ifaceobj.lowerifaces and intf_config_list:
+            update_mtu = True
 
         if update_mtu:
             lower_iface_mtu = self.cache.get_link_mtu(ifaceobj.name)
@@ -497,7 +496,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                 )
                 hw_address_list.append(macvlan_hwaddr)
 
-            if self.addressvirtual_with_route_metric and self.addr_metric_support():
+            if self.addressvirtual_with_route_metric and self.get_addr_metric_support():
                 metric = self.get_default_ip_metric()
             else:
                 metric = None
@@ -517,7 +516,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
             # If link existed before, flap the link
             if not link_created:
 
-                if not self.addressvirtual_with_route_metric or not self.addr_metric_support():
+                if not self.addressvirtual_with_route_metric or not self.get_addr_metric_support():
                     # if the system doesn't support ip addr set METRIC
                     # we need to do manually check the ordering of the ip4 routes
                     self._fix_connected_route(ifaceobj, macvlan_ifname, ips[0])
@@ -538,7 +537,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                     self.netlink.link_up(macvlan_ifname)
             else:
                 try:
-                    if not self.addressvirtual_with_route_metric or not self.addr_metric_support():
+                    if not self.addressvirtual_with_route_metric or not self.get_addr_metric_support():
                         # if the system doesn't support ip addr set METRIC
                         # we need to do manually check the ordering of the ip6 routes
                         self.iproute2.fix_ipv6_route_metric(ifaceobj, macvlan_ifname, ips)
@@ -686,11 +685,10 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                         "ips": ip4,
                         "id": vrrp_id
                     })
-            elif not ip4 and not ifquery:
+            elif not ip4 and not ifquery and self.cache.link_exists(macvlan_ip4_ifname):
                 # special check to see if all ipv4 were removed from the vrrp
                 # configuration, if so we need to remove the associated macvlan
-                if self.cache.link_exists(macvlan_ip4_ifname):
-                    self.netlink.link_del(macvlan_ip4_ifname)
+                self.netlink.link_del(macvlan_ip4_ifname)
 
             if ip6 or ifquery:
                 merged_with_existing_obj = False
@@ -718,11 +716,10 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                         "ips": ip6,
                         "id": vrrp_id
                     })
-            elif not ip6 and not ifquery:
+            elif not ip6 and not ifquery and self.cache.link_exists(macvlan_ip6_ifname):
                 # special check to see if all ipv6 were removed from the vrrp
                 # configuration, if so we need to remove the associated macvlan
-                if self.cache.link_exists(macvlan_ip6_ifname):
-                    self.netlink.link_del(macvlan_ip6_ifname)
+                self.netlink.link_del(macvlan_ip6_ifname)
 
         if not ifquery:
             # check if vrrp attribute was removed/re-assigned
@@ -755,7 +752,7 @@ class addressvirtual(AddonWithIpBlackList, moduleBase):
                             self.netlink.link_del(macvlan_ip6_ifname)
 
             except Exception as e:
-                self.logger.debug("%s: vrrp: failure while removing unused macvlan(s)" % ifname)
+                self.logger.debug("%s: vrrp: failure while removing unused macvlan(s): %s" % (ifname, e))
 
         return user_config_list
 

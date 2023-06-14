@@ -6,14 +6,18 @@
 #           Julien Fortin, julien@cumulusnetworks.com
 #
 
+import re
 import os
+
+from collections import OrderedDict
+from contextlib import suppress
 
 try:
     from ifupdown2.nlmanager.ipnetwork import IPv4Address
     from ifupdown2.lib.addon import Addon
     from ifupdown2.nlmanager.nlmanager import Link
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus
     from ifupdown2.ifupdown.utils import utils
     from ifupdown2.ifupdown.statemanager import statemanager_api as statemanager
 
@@ -26,7 +30,7 @@ except (ImportError, ModuleNotFoundError):
     from lib.addon import Addon
     from nlmanager.nlmanager import Link
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus
     from ifupdown.utils import utils
     from ifupdown.statemanager import statemanager_api as statemanager
 
@@ -283,6 +287,9 @@ class bond(Addon, moduleBase):
             True
         )
 
+        self.current_bond_speed = -1
+        self.speed_pattern = re.compile(r"Speed: (\d+)")
+
     def get_bond_slaves(self, ifaceobj):
         # bond-ports aliases should be translated to bond-slaves
         return ifaceobj.get_attr_value_first('bond-slaves')
@@ -290,7 +297,9 @@ class bond(Addon, moduleBase):
     def _is_bond(self, ifaceobj):
         # at first link_kind is not set but once ifupdownmain
         # calls get_dependent_ifacenames link_kind is set to BOND
-        return ifaceobj.link_kind & ifaceLinkKind.BOND or self.get_bond_slaves(ifaceobj)
+        return ifaceobj.link_kind & ifaceLinkKind.BOND \
+               or ifaceobj.get_attr_value_first("bond-mode") \
+               or self.get_bond_slaves(ifaceobj)
 
     def get_dependent_ifacenames(self, ifaceobj, ifacenames_all=None, old_ifaceobjs=False):
         """ Returns list of interfaces dependent on ifaceobj """
@@ -302,7 +311,7 @@ class bond(Addon, moduleBase):
                                           ifacenames_all)
         ifaceobj.dependency_type = ifaceDependencyType.MASTER_SLAVE
         # Also save a copy for future use
-        ifaceobj.priv_data = list(slave_list)
+        ifaceobj.priv_data = list(slave_list) if slave_list else []
         if ifaceobj.link_type != ifaceLinkType.LINK_NA:
            ifaceobj.link_type = ifaceLinkType.LINK_MASTER
         ifaceobj.link_kind |= ifaceLinkKind.BOND
@@ -350,7 +359,58 @@ class bond(Addon, moduleBase):
                 return True
         return False
 
+    def compare_bond_and_slave_speed(self, bond_ifaceobj, slave_ifname, slave_speed):
+        if self.current_bond_speed != slave_speed:
+            self.log_error(
+                "%s: ignoring device to due device's speed (%s) mismatching bond (%s) speed (%s)"
+                % (slave_ifname, slave_speed, bond_ifaceobj.name, self.current_bond_speed),
+                ifaceobj=bond_ifaceobj
+            )
+
+    def valid_slave_speed(self, ifaceobj, bond_slaves, slave):
+        if not slave.startswith("swp"):
+            # lazy optimization: only check "swp" interfaces
+            return True
+
+        if self.current_bond_speed < 0:
+            self.current_bond_speed = self.get_bond_speed(bond_slaves)
+
+        if self.current_bond_speed < 0:
+            # if we can't get the speed of the bond there's probably no ports enslaved
+            return True
+
+        try:
+            self.compare_bond_and_slave_speed(ifaceobj, slave, int(self.read_file_oneline(f"/sys/class/net/{slave}/speed")))
+        except:
+            try:
+                match = self.speed_pattern.search(utils.exec_commandl(["/usr/sbin/ethtool", f"{slave}"]))
+                if match:
+                    self.compare_bond_and_slave_speed(ifaceobj, slave, int(match.group(1)))
+            except ValueError:
+                # if we can't manage to extract the speed, it's not a big deal lets continue
+                pass
+        # validate if we are unable to get a speed (logical interface?)
+        return True
+
+    def get_bond_speed(self, runningslaves):
+        # check bond slave speed
+        bond_speed = -1
+        for slave in runningslaves:
+            if not slave.startswith("swp"):
+                continue
+            try:
+                slave_speed = int(self.read_file_oneline(f"/sys/class/net/{slave}/speed"))
+            except:
+                slave_speed = -1
+
+            if bond_speed < 0:
+                bond_speed = slave_speed
+        return bond_speed
+
     def _add_slaves(self, ifaceobj, runningslaves, ifaceobj_getfunc=None):
+        # reset the current_bond_speed
+        self.current_bond_speed = -1
+
         slaves = self._get_slave_list(ifaceobj)
         if not slaves:
             self.logger.debug('%s: no slaves found' %ifaceobj.name)
@@ -371,6 +431,14 @@ class bond(Addon, moduleBase):
                                    %(ifaceobj.name, slave), ifaceobj,
                                      raise_error=False)
                     continue
+
+            try:
+                # making sure the slave-to-be has the right speed
+                if not self.valid_slave_speed(ifaceobj, runningslaves, slave):
+                    continue
+            except Exception as e:
+                self.logger.debug("%s: bond-slave (%s) speed validation failed: %s" % (ifaceobj.name, slave, str(e)))
+
             link_up = False
             if self.cache.link_is_up(slave):
                 self.netlink.link_down_force(slave)
@@ -452,7 +520,7 @@ class bond(Addon, moduleBase):
             for s in removed_slave:
                 try:
                     runningslaves.remove(s)
-                except:
+                except Exception:
                     pass
 
         return  runningslaves
@@ -621,11 +689,10 @@ class bond(Addon, moduleBase):
                                           'probably not supported on this system'
                                           % (ifname, attr_name, user_config))
                         continue
-                    elif link_exists:
+                    elif link_exists and cached_value == nl_value:
                         # there should be a cached value if the link already exists
-                        if cached_value == nl_value:
-                            # if the user value is already cached: continue
-                            continue
+                        # if the user value is already cached: continue
+                        continue
 
                     # else: the link doesn't exist so we create the bond with
                     # all the user/policy defined values without extra checks
@@ -769,10 +836,9 @@ class bond(Addon, moduleBase):
             )
 
             # if specific attributes need to be set we need to down the bond first
-            if ifla_info_data and is_link_up:
-                if self._should_down_bond(ifla_info_data):
-                    self.netlink.link_down_force(ifname)
-                    is_link_up = False
+            if ifla_info_data and is_link_up and self._should_down_bond(ifla_info_data):
+                self.netlink.link_down_force(ifname)
+                is_link_up = False
         else:
             bond_slaves = []
 
@@ -863,17 +929,27 @@ class bond(Addon, moduleBase):
             self.log_error(str(e), ifaceobj)
 
     def _down(self, ifaceobj, ifaceobj_getfunc=None):
+        bond_slaves = self.cache.get_slaves(ifaceobj.name)
+
         try:
             self.netlink.link_del(ifaceobj.name)
         except Exception as e:
             self.log_warn('%s: %s' % (ifaceobj.name, str(e)))
 
+        # set protodown (and reason) off bond slaves
+        for slave in bond_slaves:
+            with suppress(Exception):
+                self.iproute2.link_set_protodown_reason_clag_off(slave)
+            with suppress(Exception):
+                self.iproute2.link_set_protodown_reason_frr_off(slave)
+            with suppress(Exception):
+                self.netlink.link_set_protodown_off(slave)
+
     def _query_check_bond_slaves(self, ifaceobjcurr, attr, user_bond_slaves, running_bond_slaves):
         query = 1
 
-        if user_bond_slaves and running_bond_slaves:
-            if not set(user_bond_slaves).symmetric_difference(running_bond_slaves):
-                query = 0
+        if user_bond_slaves and running_bond_slaves and not set(user_bond_slaves).symmetric_difference(running_bond_slaves):
+            query = 0
 
         # we want to display the same bond-slaves list as provided
         # in the interfaces file but if this list contains regexes or
@@ -960,7 +1036,7 @@ class bond(Addon, moduleBase):
             try:
                 iface_attrs.remove("es-sys-mac")
                 self.logger.info("%s: non-root user can't check attribute \"es-sys-mac\" value" % ifaceobj.name)
-            except:
+            except Exception:
                 pass
 
         for attr in iface_attrs:

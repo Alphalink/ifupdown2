@@ -19,7 +19,7 @@ try:
 
     from ifupdown2.nlmanager.nlmanager import Link
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus, iface
     from ifupdown2.ifupdown.utils import utils
 
     from ifupdown2.ifupdownaddons.cache import *
@@ -33,7 +33,7 @@ except (ImportError, ModuleNotFoundError):
 
     from nlmanager.nlmanager import Link
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus, iface
     from ifupdown.utils import utils
 
     from ifupdownaddons.cache import *
@@ -815,7 +815,7 @@ class bridge(Bridge, moduleBase):
                 module_name=self.__class__.__name__,
                 attr="bridge_vni_per_svi_limit"
             ))
-        except:
+        except Exception:
             self.bridge_vni_per_svi_limit = -1
 
     @staticmethod
@@ -897,7 +897,7 @@ class bridge(Bridge, moduleBase):
         c3 = self.syntax_check_learning_l2_vni_evpn(ifaceobj)
         c4 = self.syntax_check_bridge_arp_vni_vlan(ifaceobj, ifaceobj_getfunc)
         c5 = self.syntax_check_bridge_vni_svi_limit(ifaceobj, ifaceobj_getfunc)
-        return retval and c1 and c3 and c4 and c5#and c2
+        return retval and c1 and c2 and c3 and c4 and c5
 
     def syntax_check_bridge_vni_svi_limit(self, ifaceobj, ifaceobj_getfunc):
         if self.bridge_vni_per_svi_limit > 0 and ifaceobj.link_kind & ifaceLinkKind.VXLAN:
@@ -947,7 +947,7 @@ class bridge(Bridge, moduleBase):
                 for obj in ifaceobj_getfunc(intf):
                     if obj.link_kind & ifaceLinkKind.BRIDGE:
                         return obj.name
-        except:
+        except Exception:
             pass
         return None
 
@@ -2609,7 +2609,7 @@ class bridge(Bridge, moduleBase):
                 for vlan_vni_map_entry in bridge_vlan_vni_map_entry.split():
                     try:
                         vlans_str, vni_str = utils.get_vlan_vni_in_map_entry(vlan_vni_map_entry)
-                    except:
+                    except Exception:
                         return self.__warn_bridge_vlan_vni_map_syntax_error(vxlan_name, vlan_vni_map_entry)
 
                     # we need to convert vlan_str and vni_str back to a map {vlan: vni}
@@ -3874,7 +3874,7 @@ class bridge(Bridge, moduleBase):
             for vlan_vni in bridge_vlan_vni_map_entry.split():
                 try:
                     vlans_str, vni_str = utils.get_vlan_vni_in_map_entry(vlan_vni)
-                except:
+                except Exception:
                     fail = True
                     self.__warn_bridge_vlan_vni_map_syntax_error(ifname, vlan_vni)
                     continue
@@ -3893,7 +3893,7 @@ class bridge(Bridge, moduleBase):
 
                         if vlan != cached_vnis[index] or vnis_list[i] != cached_vlans[index]:
                             fail = True
-                except:
+                except Exception:
                     fail = True
 
             ifaceobjcurr.update_config_with_status("bridge-vlan-vni-map", bridge_vlan_vni_map_entry, fail)

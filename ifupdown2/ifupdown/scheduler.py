@@ -10,9 +10,12 @@
 import os
 import sys
 
+from collections import OrderedDict
+
+
 try:
     from ifupdown2.ifupdown.graph import *
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceType, ifaceLinkKind, ifaceStatus, ifaceState
     from ifupdown2.ifupdown.utils import utils
     from ifupdown2.ifupdown.statemanager import *
 
@@ -20,7 +23,7 @@ try:
     import ifupdown2.ifupdown.ifupdownflags as ifupdownflags
 except (ImportError, ModuleNotFoundError):
     from ifupdown.graph import *
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceType, ifaceLinkKind, ifaceStatus, ifaceState
     from ifupdown.utils import utils
     from ifupdown.statemanager import *
 
@@ -127,15 +130,18 @@ class ifaceScheduler():
 
         if ifupdownobj.config.get('addon_scripts_support', '0') == '1':
             # execute /etc/network/ scripts
-            os.environ['IFACE'] = ifaceobj.name if ifaceobj.name else ''
-            os.environ['LOGICAL'] = ifaceobj.name if ifaceobj.name else ''
-            os.environ['METHOD'] = ifaceobj.addr_method if ifaceobj.addr_method else ''
-            os.environ['ADDRFAM'] = ','.join(ifaceobj.addr_family) if ifaceobj.addr_family else ''
+            command_env = (cenv or {}).copy()
+            command_env.update({
+                "IFACE": ifaceobj.name if ifaceobj.name else "",
+                "LOGICAL": ifaceobj.name if ifaceobj.name else "",
+                "METHOD": ifaceobj.addr_method if ifaceobj.addr_method else "",
+                "ADDRFAM": ','.join(ifaceobj.addr_family) if ifaceobj.addr_family else "",
+            })
+
             for mname in ifupdownobj.script_ops.get(op, []):
-                ifupdownobj.logger.debug('%s: %s : running script %s'
-                    %(ifacename, op, mname))
+                ifupdownobj.logger.debug("%s: %s : running script %s" % (ifacename, op, mname))
                 try:
-                    utils.exec_command(mname, env=cenv)
+                    utils.exec_command(mname, env=command_env)
                 except Exception as e:
                     if "permission denied" in str(e).lower():
                         ifupdownobj.logger.warning('%s: %s %s' % (ifacename, op, str(e)))

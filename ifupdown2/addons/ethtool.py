@@ -13,7 +13,7 @@ try:
     import ifupdown2.ifupdown.policymanager as policymanager
     import ifupdown2.ifupdown.statemanager as statemanager
 
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceLinkPrivFlags
     from ifupdown2.ifupdown.utils import utils
     from ifupdown2.ifupdown.exceptions import moduleNotSupported
 
@@ -26,7 +26,7 @@ except (ImportError, ModuleNotFoundError):
     import ifupdown.policymanager as policymanager
     import ifupdown.statemanager as statemanager
 
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceLinkPrivFlags
     from ifupdown.utils import utils
     from ifupdown.exceptions import moduleNotSupported
 
@@ -117,6 +117,18 @@ class ethtool(Addon, moduleBase):
                 'validvals': ['on', 'off'],
                 'default': 'varies by interface'
             },
+            'ring-rx': {
+                'help': 'Ring RX Parameter',
+                'example': ['ring-rx 512'],
+                'validvals': ['max', '<number>'],
+                'default': 'varies by interface'
+            },
+            'ring-tx': {
+                'help': 'Ring TX Parameter',
+                'example': ['ring-tx 512'],
+                'validvals': ['max', '<number>'],
+                'default': 'varies by interface'
+            },
         }
     }
 
@@ -134,6 +146,45 @@ class ethtool(Addon, moduleBase):
             module_name=self.__class__.__name__,
             attr='ethtool_ignore_errors'
         )
+
+    def do_ring_settings(self, ifaceobj, attr_name, option):
+        # Get the current configuration value and default value for the specified attribute
+        config_val = ifaceobj.get_attr_value_first(attr_name)
+        default_val = policymanager.policymanager_api.get_iface_default(
+                            module_name='ethtool',
+                            ifname=ifaceobj.name,
+                            attr=attr_name)
+
+        # Check which variable to use, config_val > default_val. If none are set, return.
+        value = config_val or default_val
+        if not value:
+            return
+
+        if value == "max":
+            # Get the maximum value for the specified attribute
+            max_val = self.get_max_attr(attr_name, ifaceobj)
+            if not max_val:
+                return
+            value = max_val
+
+        # Get the current running value
+        running_val = self.get_running_attr(attr_name, ifaceobj)
+
+
+        # If the value is the same as the running value, do nothing
+        if value == running_val:
+            return
+
+        # Generate the ethtool command
+        cmd = ('%s --set-ring %s %s %s' %
+                    (utils.ethtool_cmd, ifaceobj.name, option, value))
+
+        # Execute the ethtool command if command is generated
+        if cmd:
+            try:
+                utils.exec_command(cmd)
+            except Exception as e:
+                self.log_error('%s: %s' %(ifaceobj.name, str(e)), ifaceobj)
 
     def do_offload_settings(self, ifaceobj, attr_name, eth_name):
         default = 'default_' + eth_name
@@ -324,6 +375,8 @@ class ethtool(Addon, moduleBase):
 
         self.do_speed_settings(ifaceobj)
         self.do_fec_settings(ifaceobj)
+        self.do_ring_settings(ifaceobj, 'ring-rx', 'rx')
+        self.do_ring_settings(ifaceobj, 'ring-tx', 'tx')
         self.do_offload_settings(ifaceobj, 'gro-offload', 'gro')
         self.do_offload_settings(ifaceobj, 'lro-offload', 'lro')
         self.do_offload_settings(ifaceobj, 'gso-offload', 'gso')
@@ -435,55 +488,78 @@ class ethtool(Addon, moduleBase):
 
         return value
 
-    def get_running_attr(self,attr='',ifaceobj=None):
+    def get_ring_setting(self, ethtool_output, setting, get_ring_max=False):
+        value = None
+
+        if get_ring_max:
+            settings = ethtool_output.split('Current hardware settings:', 1)[0]
+        else:
+            settings = ethtool_output.split('Current hardware settings:', 1)[1]
+
+        for line in settings.splitlines():
+            if line.startswith(setting):
+                value = line.split(':', 1)[1]
+                return value.strip()
+
+        return value
+
+    def get_attr_value(self,attr='',ifaceobj=None,get_max=False):
         if not ifaceobj or not attr:
             return
-        running_attr = None
+        attr_value = None
         try:
             if attr == 'autoneg':
                 output = utils.exec_commandl([utils.ethtool_cmd, ifaceobj.name])
-                running_attr = self.get_autoneg(ethtool_output=output)
+                attr_value = self.get_autoneg(ethtool_output=output)
+            elif attr == 'ring-rx':
+                output = utils.exec_command('%s --show-ring %s'%
+                                            (utils.ethtool_cmd, ifaceobj.name))
+                attr_value = self.get_ring_setting(ethtool_output=output, setting='RX:', get_ring_max=get_max)
+            elif attr == 'ring-tx':
+                output = utils.exec_command('%s --show-ring %s'%
+                                            (utils.ethtool_cmd, ifaceobj.name))
+                attr_value = self.get_ring_setting(ethtool_output=output, setting='TX:', get_ring_max=get_max)
             elif attr == 'fec':
                 output = utils.exec_command('%s --show-fec %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_fec_encoding(ethtool_output=output)
+                attr_value = self.get_fec_encoding(ethtool_output=output)
             elif attr == 'gro':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='generic-receive-offload')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='generic-receive-offload')
             elif attr == 'lro':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='large-receive-offload')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='large-receive-offload')
             elif attr == 'gso':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='generic-segmentation-offload')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='generic-segmentation-offload')
             elif attr == 'tso':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='tcp-segmentation-offload')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='tcp-segmentation-offload')
             elif attr == 'ufo':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='udp-fragmentation-offload')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='udp-fragmentation-offload')
             elif attr == 'rx':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='rx-checksumming')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='rx-checksumming')
             elif attr == 'tx':
                 if not self.feature_cache:
                     self.feature_cache = utils.exec_command('%s --show-features %s'%
                                             (utils.ethtool_cmd, ifaceobj.name))
-                running_attr = self.get_offload_setting(ethtool_output=self.feature_cache, setting='tx-checksumming')
+                attr_value = self.get_offload_setting(ethtool_output=self.feature_cache, setting='tx-checksumming')
             else:
-                running_attr = self.io.read_file_oneline('/sys/class/net/%s/%s' % \
+                attr_value = self.io.read_file_oneline('/sys/class/net/%s/%s' % \
                                                       (ifaceobj.name, attr))
         except Exception as e:
             if not self.ethtool_ignore_errors:
@@ -491,8 +567,13 @@ class ethtool(Addon, moduleBase):
                 self.logger.debug('ethtool: problems calling ethtool or reading'
                                   ' /sys/class on iface %s for attr %s: %s' %
                                   (ifaceobj.name, attr, str(e)))
-        return running_attr
+        return attr_value
 
+    def get_running_attr(self,attr='',ifaceobj=None):
+        return self.get_attr_value(attr=attr, ifaceobj=ifaceobj, get_max=False)
+
+    def get_max_attr(self,attr='',ifaceobj=None):
+        return self.get_attr_value(attr=attr, ifaceobj=ifaceobj, get_max=True)
 
     def _query_running(self, ifaceobj, ifaceobj_getfunc=None):
         """

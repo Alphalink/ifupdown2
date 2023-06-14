@@ -15,11 +15,11 @@ import os
 import re
 
 try:
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceType, ifaceJsonDecoder, iface
     from ifupdown2.ifupdown.utils import utils
     from ifupdown2.ifupdown.template import templateEngine
 except (ImportError, ModuleNotFoundError):
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceType, ifaceJsonDecoder, iface
     from ifupdown.utils import utils
     from ifupdown.template import templateEngine
 
@@ -247,7 +247,7 @@ class networkInterfaces():
             addrlist = iface_config.get('address')
             if addrlist:
                 # find the index of last address element
-                for i in range(0, len(addrlist) - len(attrvallist) -1):
+                for _ in range(0, len(addrlist) - len(attrvallist) -1):
                     attrvallist.append('')
                 attrvallist.append(attrval)
                 iface_config[newattrname] = attrvallist

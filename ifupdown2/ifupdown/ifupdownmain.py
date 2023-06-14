@@ -29,7 +29,7 @@ try:
     import ifupdown2.ifupdown.ifupdownconfig as ifupdownConfig
 
     from ifupdown2.ifupdown.graph import *
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceStatusUserStrs, ifaceType, ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus, iface
     from ifupdown2.ifupdown.scheduler import *
     from ifupdown2.ifupdown.exceptions import *
     from ifupdown2.ifupdown.networkinterfaces import *
@@ -48,7 +48,7 @@ except (ImportError, ModuleNotFoundError):
     import ifupdown.ifupdownconfig as ifupdownConfig
 
     from ifupdown.graph import *
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceStatusUserStrs, ifaceType, ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags, ifaceLinkType, ifaceDependencyType, ifaceStatus, iface
     from ifupdown.scheduler import *
     from ifupdown.exceptions import *
     from ifupdown.networkinterfaces import *
@@ -134,8 +134,10 @@ class ifupdownMain:
         return False
 
     def run_down(self, ifaceobj):
-        if ((ifaceobj.link_kind & ifaceLinkKind.VRF) or
-            (ifaceobj.link_privflags & ifaceLinkPrivFlags.VRF_SLAVE)):
+        if ifaceobj.link_kind & ifaceLinkKind.VRF:
+            return
+        elif ifaceobj.link_privflags & ifaceLinkPrivFlags.VRF_SLAVE:
+            self.netlink.link_down(ifaceobj.name)
             return
         # Skip link sets on ifaceobjs of type 'vlan' (used for l2 attrs)
         # there is no real interface behind it
@@ -153,6 +155,12 @@ class ifupdownMain:
         if not self.link_exists(ifaceobj.name):
            return
         try:
+            # special case for some logical interfaces:
+            # - downed VLANs will be deleted via netlink no need to set them admin DOWN
+            if ifaceobj.link_kind & ifaceLinkKind.VLAN:
+                self.logger.debug("%s: skipping admin down (vlan will be deleted)" % ifaceobj.name)
+                return
+
             if not ifaceobj.link_privflags & ifaceLinkPrivFlags.LOOPBACK:
                 # set intf down (except loopback)
                 self.netlink.link_down(ifaceobj.name)
@@ -1121,7 +1129,7 @@ class ifupdownMain:
                                                    '-'.join(validrange)))
 
                     if multiple is not None:
-                        if not (n % multiple == 0):
+                        if n % multiple != 0:
                             raise invalidValueError('invalid value %s: must be a multiple of %s' % (n, multiple))
 
                     return True
@@ -1147,7 +1155,7 @@ class ifupdownMain:
                            '-'.join(validrange)))
 
                 if multiple is not None:
-                    if not (number % multiple == 0):
+                    if number % multiple != 0:
                         raise invalidValueError('invalid value %s: must be a multiple of %s' % (number, multiple))
 
             return True

@@ -20,12 +20,12 @@ from functools import partial
 from ipaddress import IPv4Address
 
 try:
-    from ifupdown2.ifupdown.iface import *
+    from ifupdown2.ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags
 
     import ifupdown2.ifupdown.policymanager as policymanager
     import ifupdown2.ifupdown.ifupdownflags as ifupdownflags
 except (ImportError, ModuleNotFoundError):
-    from ifupdown.iface import *
+    from ifupdown.iface import ifaceRole, ifaceLinkKind, ifaceLinkPrivFlags
 
     import ifupdown.policymanager as policymanager
     import ifupdown.ifupdownflags as ifupdownflags
@@ -386,7 +386,7 @@ class utils():
         finally:
             utils.disable_subprocess_signal_forwarding(signal.SIGINT)
 
-        cmd_output_string = cmd_output.decode() if cmd_output else cmd_output
+        cmd_output_string = cmd_output.decode() if cmd_output is not None else cmd_output
 
         if cmd_returncode != 0:
             raise Exception(cls._format_error(cmd,
