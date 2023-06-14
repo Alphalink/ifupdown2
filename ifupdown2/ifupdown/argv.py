@@ -66,6 +66,7 @@ class Parse:
             descr = 'reload interface configuration.'
         else:
             descr = 'interface management'
+
         argparser = argparse.ArgumentParser(description=descr)
         if self.op == 'reload':
             self.update_ifreload_argparser(argparser)
@@ -77,7 +78,7 @@ class Parse:
                 self.update_ifdown_argparser(argparser)
             elif self.op == 'query':
                 self.update_ifquery_argparser(argparser)
-        self.update_common_argparser(argparser)
+        self.update_common_argparser(argparser, self.op == 'reload')
 
         try:
             self.args = argparser.parse_args(self.argv)
@@ -160,22 +161,37 @@ class Parse:
         elif not self.args.iflist and not self.args.all:
             raise ArgvParseError("no interface(s) specified. IFACE list or -a/--all option is required")
 
+    # TODO remove
+    def argparser_mgmt_params(self, argparser, is_minimal=False):
+        def minimal(desc):
+            return argparse.SUPPRESS if is_minimal else desc
+
+        argparser.add_argument('-n', '--no-act', dest='noact', action='store_true',
+                               help='print out what would happen, but don\'t do it')
+
+    def argparse_ro_operations(self, argparser):
+        pass
+
+    def argparse_rw_operations(self, argparser):
+        argparser.add_argument('-f', '--force', dest='force', action='store_true', help='force run all operations')
+        argparser.add_argument('-l', '--syslog', dest='syslog', action='store_true')
+        argparser.add_argument('--systemd', dest='systemd', action='store_true', help="enable journalctl logging")
+
+    def argparse_up_operations(self, argparser):
+        argparser.add_argument('-s', '--syntax-check', dest='syntaxcheck', action='store_true',
+                               help='Only run the interfaces file parser')
+
+    def argparse_down_operations(self, argparser):
+        argparser.add_argument('-u', '--use-current-config', dest='usecurrentconfig', action='store_true',
+                               help=f"By default {self.op} looks at saved state for interfaces to bring down. "
+                                    f"With this option {self.op} will only look at the current interfaces file. "
+                                    'Useful when your state file is corrupted or you want down to use the latest '
+                                    'from the interfaces file')
+
     def update_argparser(self, argparser):
         """ base parser, common to all commands """
         self.argparser_interfaces_selection(argparser)
 
-        argparser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose')
-        argparser.add_argument('-d', '--debug', dest='debug', action='store_true', help='output debug info')
-        argparser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('-w', '--with-depends', dest='withdepends', action='store_true',
-                               help="run with all dependent interfaces. "
-                                    "This option is redundant when '-a' is specified. "
-                                    "With '-a' interfaces are always executed in dependency order")
-        argparser.add_argument('--perfmode', dest='perfmode', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('--nocache', dest='nocache', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('-X', '--exclude', dest='excludepats', action='append',
-                               help='Exclude interfaces from the list of interfaces to operate on. '
-                                    'Can be specified multiple times.')
         argparser.add_argument('-i', '--interfaces', dest='interfacesfile', default=None,
                                help='Specify interfaces file instead of file defined in ifupdown2.conf file')
         argparser.add_argument('-t', '--interfaces-format', dest='interfacesfileformat', default='native',
@@ -187,9 +203,8 @@ class Parse:
 
     def update_ifupdown_argparser(self, argparser):
         """ common arg parser for ifup and ifdown """
-        argparser.add_argument('-f', '--force', dest='force', action='store_true', help='force run all operations')
-        argparser.add_argument('-l', '--syslog', dest='syslog', action='store_true')
-        argparser.add_argument('--systemd', dest='systemd', action='store_true', help="enable journalctl logging")
+        self.argparse_rw_operations(argparser)
+
         group = argparser.add_mutually_exclusive_group(required=False)
         group.add_argument('-n', '--no-act', dest='noact', action='store_true',
                            help="print out what would happen, but don't do it")
@@ -199,8 +214,8 @@ class Parse:
                            help='dont run any addon modules/scripts. Only bring the interface administratively up/down')
 
     def update_ifup_argparser(self, argparser):
-        argparser.add_argument('-s', '--syntax-check', dest='syntaxcheck',
-                               action='store_true', help='Only run the interfaces file parser')
+        self.argparse_up_operations(argparser)
+
         argparser.add_argument('-k', '--skip-upperifaces', dest='skipupperifaces', action='store_true',
                                help='ifup by default tries to add newly created interfaces into its upper/parent '
                                     'interfaces. Eg. if a bridge port is created as a result of ifup on the port, '
@@ -210,12 +225,7 @@ class Parse:
 
     def update_ifdown_argparser(self, argparser):
         self.update_ifupdown_argparser(argparser)
-        argparser.add_argument('-u', '--use-current-config',
-                               dest='usecurrentconfig', action='store_true',
-                               help='By default ifdown looks at the saved state for interfaces to bring down. '
-                                    'This option allows ifdown to look at the current interfaces file. '
-                                    'Useful when your state file is corrupted or you want down to use '
-                                    'the latest from the interfaces file')
+        self.argparse_down_operations(argparser)
 
     def update_ifquery_argparser(self, argparser):
         """ arg parser for ifquery options """
@@ -248,32 +258,22 @@ class Parse:
                            help='Reload the configuration for all interfaces which are '
                                 'currently up regardless of whether an interface has '
                                 '"auto <interface>" configuration within the /etc/network/interfaces file.')
+
+        self.argparse_rw_operations(argparser)
+
         argparser.add_argument('-n', '--no-act', dest='noact', action='store_true',
                                help='print out what would happen, but don\'t do it')
-        argparser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose')
-        argparser.add_argument('-d', '--debug', dest='debug', action='store_true', help='output debug info')
-        argparser.add_argument('-w', '--with-depends', dest='withdepends', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('--perfmode', dest='perfmode', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('--nocache', dest='nocache', action='store_true', help=argparse.SUPPRESS)
-        argparser.add_argument('-X', '--exclude', dest='excludepats', action='append', help=argparse.SUPPRESS)
         # argparser.add_argument('-j', '--jobs', dest='jobs', type=int,
         #            default=-1, choices=range(1,12), help=argparse.SUPPRESS)
         # argparser.add_argument('-i', '--interfaces', dest='interfacesfile',
         #            default='/etc/network/interfaces',
         #            help='use interfaces file instead of default ' +
         #            '/etc/network/interfaces')
-        argparser.add_argument('-u', '--use-current-config', dest='usecurrentconfig', action='store_true',
-                               help='By default ifreload looks at saved state for interfaces to bring down. '
-                                    'With this option ifreload will only look at the current interfaces file. '
-                                    'Useful when your state file is corrupted or you want down to use the latest '
-                                    'from the interfaces file')
-        argparser.add_argument('-l', '--syslog', dest='syslog', action='store_true')
-        argparser.add_argument('--systemd', dest='systemd', action='store_true', help="enable journalctl logging")
-        argparser.add_argument('-f', '--force', dest='force', action='store_true', help='force run all operations')
-        argparser.add_argument('-s', '--syntax-check', dest='syntaxcheck', action='store_true',
-                               help='Only run the interfaces file parser')
 
-    def update_common_argparser(self, argparser):
+        self.argparse_down_operations(argparser)
+        self.argparse_up_operations(argparser)
+
+    def update_common_argparser(self, argparser, minimal_args=False):
         ''' general parsing rules '''
         def file_or_fd(value):
             try:
@@ -281,6 +281,22 @@ class Parse:
             except ValueError:
                 fp = os.open(value, os.O_CREAT | os.O_TRUNC | os.O_WRONLY)
             return fp
+
+        def hide_arg(desc):
+            return argparse.SUPPRESS if minimal_args else desc
+
+        argparser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose')
+        argparser.add_argument('-d', '--debug', dest='debug', action='store_true', help='output debug info')
+        argparser.add_argument('-w', '--with-depends', dest='withdepends', action='store_true',
+                               help=hide_arg("run with all dependent interfaces. "
+                                    "This option is redundant when '-a' is specified. "
+                                    "With '-a' interfaces are always executed in dependency order"))
+        argparser.add_argument('--perfmode', dest='perfmode', action='store_true', help=argparse.SUPPRESS)
+        argparser.add_argument('--nocache', dest='nocache', action='store_true', help=argparse.SUPPRESS)
+        argparser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help=argparse.SUPPRESS)
+        argparser.add_argument('-X', '--exclude', dest='excludepats', action='append',
+                               help=hide_arg('Exclude interfaces from the list of interfaces to operate on. '
+                                    'Can be specified multiple times.'))
 
         argparser.add_argument('-V', '--version', action=VersionAction, nargs=0)
         argparser.add_argument(
