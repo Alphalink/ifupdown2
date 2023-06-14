@@ -70,14 +70,12 @@ class Parse:
         argparser = argparse.ArgumentParser(description=descr)
         if self.op == 'reload':
             self.update_ifreload_argparser(argparser)
-        else:
-            self.update_argparser(argparser)
-            if self.op == 'up':
-                self.update_ifup_argparser(argparser)
-            elif self.op == 'down':
-                self.update_ifdown_argparser(argparser)
-            elif self.op == 'query':
-                self.update_ifquery_argparser(argparser)
+        elif self.op == 'up':
+            self.update_ifup_argparser(argparser)
+        elif self.op == 'down':
+            self.update_ifdown_argparser(argparser)
+        elif self.op == 'query':
+            self.update_ifquery_argparser(argparser)
         self.update_common_argparser(argparser, self.op == 'reload')
 
         try:
@@ -161,37 +159,36 @@ class Parse:
         elif not self.args.iflist and not self.args.all:
             raise ArgvParseError("no interface(s) specified. IFACE list or -a/--all option is required")
 
-    # TODO remove
-    def argparser_mgmt_params(self, argparser, is_minimal=False):
-        def minimal(desc):
-            return argparse.SUPPRESS if is_minimal else desc
-
+    def argparser_rw_operations(self, argparser):
+        """ Required params for modifications """
         argparser.add_argument('-n', '--no-act', dest='noact', action='store_true',
-                               help='print out what would happen, but don\'t do it')
-
-    def argparse_ro_operations(self, argparser):
-        pass
-
-    def argparse_rw_operations(self, argparser):
+                help="print out what would happen, but don't do it")
         argparser.add_argument('-f', '--force', dest='force', action='store_true', help='force run all operations')
         argparser.add_argument('-l', '--syslog', dest='syslog', action='store_true')
         argparser.add_argument('--systemd', dest='systemd', action='store_true', help="enable journalctl logging")
 
-    def argparse_up_operations(self, argparser):
+    def argparser_up_operations(self, argparser):
         argparser.add_argument('-s', '--syntax-check', dest='syntaxcheck', action='store_true',
                                help='Only run the interfaces file parser')
 
-    def argparse_down_operations(self, argparser):
+    def argparser_down_operations(self, argparser):
         argparser.add_argument('-u', '--use-current-config', dest='usecurrentconfig', action='store_true',
-                               help=f"By default {self.op} looks at saved state for interfaces to bring down. "
-                                    f"With this option {self.op} will only look at the current interfaces file. "
+                               help=f"By default if{self.op} looks at saved state for interfaces to bring down. "
+                                    f"With this option if{self.op} will only look at the current interfaces file. "
                                     'Useful when your state file is corrupted or you want down to use the latest '
                                     'from the interfaces file')
 
-    def update_argparser(self, argparser):
-        """ base parser, common to all commands """
-        self.argparser_interfaces_selection(argparser)
+    def argparser_ifupdown_operations(self, argparser):
+        """ shared operations by ifup and ifdown """
 
+        group = argparser.add_mutually_exclusive_group(required=False)
+        group.add_argument('-p', '--print-dependency', dest='printdependency',
+                           choices=['list', 'dot'], help='print iface dependency')
+        group.add_argument('--no-scripts', '--admin-state', dest='noaddons', action='store_true',
+                           help='dont run any addon modules/scripts. Only bring the interface administratively up/down')
+
+    def argparser_input_file(self, argparser):
+        # TODO comment les .d/ est lu ?
         argparser.add_argument('-i', '--interfaces', dest='interfacesfile', default=None,
                                help='Specify interfaces file instead of file defined in ifupdown2.conf file')
         argparser.add_argument('-t', '--interfaces-format', dest='interfacesfileformat', default='native',
@@ -201,38 +198,39 @@ class Parse:
                                     'This option can be used in case of ambiguity between '
                                     'a vlan interface and an iface interface of the same name')
 
-    def update_ifupdown_argparser(self, argparser):
-        """ common arg parser for ifup and ifdown """
-        self.argparse_rw_operations(argparser)
-
-        group = argparser.add_mutually_exclusive_group(required=False)
-        group.add_argument('-n', '--no-act', dest='noact', action='store_true',
-                           help="print out what would happen, but don't do it")
-        group.add_argument('-p', '--print-dependency', dest='printdependency',
-                           choices=['list', 'dot'], help='print iface dependency')
-        group.add_argument('--no-scripts', '--admin-state', dest='noaddons', action='store_true',
-                           help='dont run any addon modules/scripts. Only bring the interface administratively up/down')
-
     def update_ifup_argparser(self, argparser):
-        self.argparse_up_operations(argparser)
+        """ arg parser for ifup options """
+        self.argparser_interfaces_selection(argparser)
+        self.argparser_up_operations(argparser)
+        self.argparser_rw_operations(argparser)
+        self.argparser_ifupdown_operations(argparser)
+        self.argparser_input_file(argparser)
 
         argparser.add_argument('-k', '--skip-upperifaces', dest='skipupperifaces', action='store_true',
                                help='ifup by default tries to add newly created interfaces into its upper/parent '
                                     'interfaces. Eg. if a bridge port is created as a result of ifup on the port, '
                                     'ifup automatically adds the port to the bridge. This option can be used to '
                                     'disable this default behaviour')
-        self.update_ifupdown_argparser(argparser)
 
     def update_ifdown_argparser(self, argparser):
-        self.update_ifupdown_argparser(argparser)
-        self.argparse_down_operations(argparser)
+        """ arg parser for ifdown options """
+        self.argparser_interfaces_selection(argparser)
+        self.argparser_rw_operations(argparser)
+        self.argparser_ifupdown_operations(argparser)
+        self.argparser_down_operations(argparser)
+        self.argparser_input_file(argparser)
 
     def update_ifquery_argparser(self, argparser):
-        """ arg parser for ifquery options """
+        """
+        arg parser for ifquery options
+        All operations imply an automatic -a/--all. This is safe because they are RO operations.
+        """
+        self.argparser_interfaces_selection(argparser)
+        self.argparser_input_file(argparser)
 
-        # -l is same as '-a', only here for backward compatibility
         argparser.add_argument('-l', '--list', action='store_true', dest='list',
                                help='list all matching known interfaces')
+
         group = argparser.add_mutually_exclusive_group(required=False)
         group.add_argument('-r', '--running', dest='running', action='store_true',
                            help='query running state of an interface')
@@ -240,12 +238,13 @@ class Parse:
                            help='check interface file contents against running state of an interface')
         group.add_argument('-x', '--raw', action='store_true', dest='raw', help='print raw config file entries')
         group.add_argument('--print-savedstate', action='store_true', dest='printsavedstate', help=argparse.SUPPRESS)
-        argparser.add_argument('-o', '--format', dest='format', default='native',
-                               choices=['native', 'json'], help='interface display format')
         argparser.add_argument('-p', '--print-dependency', dest='printdependency',
                                choices=['list', 'dot'], help='print interface dependency')
         argparser.add_argument('-s', '--syntax-help', action='store_true', dest='syntaxhelp',
                                help='print supported interface config syntax')
+
+        argparser.add_argument('-o', '--format', dest='format', default='native',
+                               choices=['native', 'json'], help='interface display format')
         argparser.add_argument('--with-defaults', action='store_true', dest='withdefaults',
                                help='check policy default file contents, for unconfigured attributes, '
                                     'against running state of an interface')
@@ -259,10 +258,8 @@ class Parse:
                                 'currently up regardless of whether an interface has '
                                 '"auto <interface>" configuration within the /etc/network/interfaces file.')
 
-        self.argparse_rw_operations(argparser)
+        self.argparser_rw_operations(argparser)
 
-        argparser.add_argument('-n', '--no-act', dest='noact', action='store_true',
-                               help='print out what would happen, but don\'t do it')
         # argparser.add_argument('-j', '--jobs', dest='jobs', type=int,
         #            default=-1, choices=range(1,12), help=argparse.SUPPRESS)
         # argparser.add_argument('-i', '--interfaces', dest='interfacesfile',
@@ -270,8 +267,8 @@ class Parse:
         #            help='use interfaces file instead of default ' +
         #            '/etc/network/interfaces')
 
-        self.argparse_down_operations(argparser)
-        self.argparse_up_operations(argparser)
+        self.argparser_down_operations(argparser)
+        self.argparser_up_operations(argparser)
 
     def update_common_argparser(self, argparser, minimal_args=False):
         ''' general parsing rules '''
