@@ -7,6 +7,7 @@
 #
 
 import sys
+from functools import reduce
 import argparse
 
 try:
@@ -125,7 +126,15 @@ class Parse:
         * --allow filter this interfaces list to the specified scope (interfaces marked as 'auto' by default)
         Some commands in ifreload or ifquery have an implicit -a/--all
         """
-        argparser.add_argument('iflist', metavar='IFACE', nargs='*',
+
+        class ExpandItfListAction(argparse.Action):
+            def __call__(self, _parser, namespace, values, option_string=None):
+                expanded = (utils.expand_iface_range(itf) or [itf] for itf in values)
+                flattened = reduce(lambda xs, x: xs + x, expanded, [])
+                uniq_itfs = reduce(lambda xs, x: xs if x in xs else xs + [x], flattened, [])
+                setattr(namespace, self.dest, uniq_itfs)
+
+        argparser.add_argument('iflist', metavar='IFACE', nargs='*', action=ExpandItfListAction,
                 help='interface list separated by spaces. ')
         argparser.add_argument('-a', '--all', action='store_true',
                 help='process all interfaces (limited by  --allow= filter)')
